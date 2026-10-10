@@ -1,3 +1,2 @@
-cardNumber,fullName,office,urgency,takenAt
-123,Иванов,101,2
-456,Петров,102,0,2026-10-07T14:31:00
+cardNumber;fullName;office;urgency;takenAt;type;address;closedAt
+123;Иванов;101;2;2026-10-07T14:30:00;Обычный

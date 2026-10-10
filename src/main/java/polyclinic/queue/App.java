@@ -1,25 +1,33 @@
 package polyclinic.queue;
 
 import javafx.application.Application;
+
 import javafx.geometry.Insets;
+
 import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
+import javafx.scene.layout.Priority;
+
 import javafx.stage.Stage;
 import javafx.stage.FileChooser;
+
 import javafx.beans.property.SimpleStringProperty;
+
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
 import polyclinic.queue.datastructure.BinaryMinHeap;
 
+import polyclinic.queue.model.HomeVisitTicket;
 import polyclinic.queue.model.ClosedTicket;
 import polyclinic.queue.model.Ticket;
 
 import polyclinic.queue.gui.EditTicketDialog;
 import polyclinic.queue.gui.AddTicketDialog;
+import polyclinic.queue.gui.EditHomeVisitDialog;
 
 import polyclinic.queue.io.TicketCsvLoader;
 import polyclinic.queue.io.CsvParseException;
@@ -42,12 +50,8 @@ public class App extends Application {
     @Override
     public void start(Stage primaryStage) {
         queue = new BinaryMinHeap();
-        /*queue.insert(new Ticket("123", "Иванов Иван Иванович", 101, 2));
-        queue.insert(new Ticket("456", "Петров Пётр Николаевич", 102, 0));
-        queue.insert(new Ticket("789", "Сидоров Савелий Фёдорович", 103, 1));*/
 
         tableView = new TableView<>();
-        tableView.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_ALL_COLUMNS);
 
         TableColumn<Ticket, String> timeCol = new TableColumn<>("Время взятия");
         timeCol.setCellValueFactory(cellData -> {
@@ -69,7 +73,40 @@ public class App extends Application {
         TableColumn<Ticket, Integer> urgencyCol = new TableColumn<>("Срочность");
         urgencyCol.setCellValueFactory(new PropertyValueFactory<>("urgency"));
 
-        tableView.getColumns().addAll(cardCol, nameCol, officeCol, urgencyCol, timeCol);
+        TableColumn<Ticket, String> typeCol = new TableColumn<>("Тип");
+        typeCol.setCellValueFactory(cellData -> {
+            Ticket t = cellData.getValue();
+            String type;
+            if (t instanceof HomeVisitTicket) {
+                type = "На дому";
+            } else if (t instanceof ClosedTicket) {
+                type = "Закрытый";
+            } else {
+                type = "Обычный";
+            }
+            return new SimpleStringProperty(type);
+        });
+        typeCol.setPrefWidth(100);
+
+        TableColumn<Ticket, String> addressCol = new TableColumn<>("Адрес");
+        addressCol.setCellValueFactory(cellData -> {
+            Ticket t = cellData.getValue();
+            if (t instanceof HomeVisitTicket homeTicket) {
+                return new SimpleStringProperty(homeTicket.getAddress());
+            }
+            return new SimpleStringProperty("");
+        });
+        addressCol.setPrefWidth(200);
+
+        cardCol.setPrefWidth(100);
+        nameCol.setPrefWidth(250);
+        officeCol.setPrefWidth(80);
+        urgencyCol.setPrefWidth(80);
+        typeCol.setPrefWidth(100);
+        addressCol.setPrefWidth(250);
+        timeCol.setPrefWidth(140);
+
+        tableView.getColumns().addAll(cardCol, nameCol, officeCol, urgencyCol, timeCol, typeCol, addressCol);
         updateTableView();
 
         Button btnExtract = new Button("Принять пациента");
@@ -82,6 +119,10 @@ public class App extends Application {
         btnEdit.setOnAction(e -> handleEdit());
         btnEdit.setDisable(true);
 
+        Button btnClose = new Button("Закрыть талон");
+        btnClose.setOnAction(e -> handleClose());
+        btnClose.setDisable(true);
+
         Button btnLoad = new Button("Загрузить из CSV");
         btnLoad.setOnAction(e -> handleLoadCsv());
 
@@ -91,23 +132,27 @@ public class App extends Application {
         HBox csvButtonBox = new HBox(10, btnLoad, btnSave);
         csvButtonBox.setPadding(new Insets(10));
 
-        HBox buttonBox = new HBox(10, btnExtract, btnAdd, btnEdit);
+        HBox buttonBox = new HBox(10, btnExtract, btnAdd, btnEdit, btnClose);
         buttonBox.setPadding(new Insets(10));
 
         tableView.getSelectionModel().selectedItemProperty().addListener((obs, oldSelection, newSelection) -> {
-            if (newSelection != null && !(newSelection instanceof ClosedTicket)) {
-                btnEdit.setDisable(false);
-            } else {
-                btnEdit.setDisable(true);
-            }
+            boolean hasSelection = newSelection != null;
+            boolean isClosed = newSelection instanceof ClosedTicket;
+
+            btnEdit.setDisable(!hasSelection || isClosed);
+            btnClose.setDisable(!hasSelection || isClosed);  // Закрытый нельзя закрыть ещё раз
         });
 
-        VBox root = new VBox(10, tableView, buttonBox, csvButtonBox);
+        VBox root = new VBox(10);
+        VBox.setVgrow(tableView, Priority.ALWAYS);
+        root.getChildren().addAll(tableView, buttonBox, csvButtonBox);
         root.setPadding(new Insets(10));
 
-        Scene scene = new Scene(root, 600, 400);
+        Scene scene = new Scene(root, 1200, 600);
         primaryStage.setTitle("Электронная очередь поликлиники");
         primaryStage.setScene(scene);
+        primaryStage.setMinWidth(900);
+        primaryStage.setMinHeight(500);
         primaryStage.show();
     }
 
@@ -140,18 +185,75 @@ public class App extends Application {
             return;
         }
 
-        EditTicketDialog dialog = new EditTicketDialog(selected);
+        if (selected instanceof HomeVisitTicket homeTicket) {
+            editHomeVisitTicket(homeTicket);
+        } else {
+            editRegularTicket(selected);
+        }
+    }
+
+    private void handleClose() {
+        Ticket selected = tableView.getSelectionModel().getSelectedItem();
+        if (selected == null || selected instanceof ClosedTicket) {
+            return;
+        }
+
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("Закрытие талона");
+        confirm.setHeaderText("Закрыть талон " + selected.getCardNumber() + "?");
+        confirm.setContentText("Талон станет read-only и его нельзя будет изменить.");
+
+        confirm.showAndWait().ifPresent(response -> {
+            if (response == ButtonType.OK) {
+                Ticket oldTicket = findAndRemoveTicket(selected.getCardNumber());
+                if (oldTicket != null) {
+                    ClosedTicket closed = new ClosedTicket(
+                            oldTicket.getCardNumber(),
+                            oldTicket.getFullName(),
+                            oldTicket.getOffice(),
+                            oldTicket.getUrgency(),
+                            LocalDateTime.now()
+                    );
+                    queue.insert(closed);
+                    showAlert("Талон закрыт", "Талон " + selected.getCardNumber() + " закрыт.");
+                    updateTableView();
+                }
+            }
+        });
+    }
+
+    private void editRegularTicket(Ticket ticket) {
+        EditTicketDialog dialog = new EditTicketDialog(ticket);
         dialog.showAndWait().ifPresent(result -> {
             String newFullName = dialog.getFullName();
             int newOffice = dialog.getOffice();
             int newUrgency = dialog.getUrgency();
 
-            Ticket oldTicket = findAndRemoveTicket(selected.getCardNumber());
-
+            Ticket oldTicket = findAndRemoveTicket(ticket.getCardNumber());
             if (oldTicket != null) {
                 Ticket newTicket = oldTicket.withChanges(newFullName, newOffice, newUrgency);
                 queue.insert(newTicket);
-                showAlert("Талон изменён", "Талон " + selected.getCardNumber() + " успешно обновлён.");
+                showAlert("Талон изменён", "Талон " + ticket.getCardNumber() + " успешно обновлён.");
+                updateTableView();
+            }
+        });
+    }
+
+    private void editHomeVisitTicket(HomeVisitTicket ticket) {
+        EditHomeVisitDialog dialog = new EditHomeVisitDialog(ticket);
+        dialog.showAndWait().ifPresent(result -> {
+            String newFullName = dialog.getFullName();
+            int newOffice = dialog.getOffice();
+            int newUrgency = dialog.getUrgency();
+            String newAddress = dialog.getAddress();
+
+            Ticket oldTicket = findAndRemoveTicket(ticket.getCardNumber());
+            if (oldTicket instanceof HomeVisitTicket oldHomeTicket) {
+                HomeVisitTicket newTicket = oldHomeTicket.withChanges(
+                        newFullName, newOffice, newUrgency, newAddress);
+                queue.insert(newTicket);
+                showAlert("Талон изменён",
+                        "Талон на дому " + ticket.getCardNumber() + " успешно обновлён.");
                 updateTableView();
             }
         });

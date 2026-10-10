@@ -15,6 +15,10 @@ public class EditTicketDialog extends Dialog<Pair<String, Integer>> {
     public EditTicketDialog(Ticket ticket) {
         setTitle("Редактирование талона");
         setHeaderText("Измените данные талона: " + ticket.getCardNumber());
+        setResizable(true);
+
+        getDialogPane().setMinSize(500, 300);
+        getDialogPane().setPrefSize(500, 300);
 
         ButtonType okButton = new ButtonType("ОК", ButtonBar.ButtonData.OK_DONE);
         getDialogPane().getButtonTypes().addAll(okButton, ButtonType.CANCEL);
