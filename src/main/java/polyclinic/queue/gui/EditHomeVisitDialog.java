@@ -3,25 +3,27 @@ package polyclinic.queue.gui;
 import javafx.geometry.Insets;
 import javafx.scene.control.*;
 import javafx.scene.layout.GridPane;
-import polyclinic.queue.model.HomeVisitTicket;
 
-public class EditHomeVisitDialog extends Dialog<Void> {
+import polyclinic.queue.model.HomeVisitTicket;
+import polyclinic.queue.util.Validators;
+
+public class EditHomeVisitDialog extends Dialog<ButtonType> {
 
     private final TextField fullNameField;
     private final TextField officeField;
     private final ComboBox<Integer> urgencyComboBox;
     private final TextField addressField;
+    private final ButtonType okButtonType;
 
     public EditHomeVisitDialog(HomeVisitTicket ticket) {
         setTitle("Редактирование талона на дому");
         setHeaderText("Измените данные вызова: " + ticket.getCardNumber());
         setResizable(true);
+        getDialogPane().setMinSize(500, 350);
+        getDialogPane().setPrefSize(500, 350);
 
-        getDialogPane().setMinSize(500, 300);
-        getDialogPane().setPrefSize(500, 300);
-
-        ButtonType okButton = new ButtonType("ОК", ButtonBar.ButtonData.OK_DONE);
-        getDialogPane().getButtonTypes().addAll(okButton, ButtonType.CANCEL);
+        okButtonType = new ButtonType("ОК", ButtonBar.ButtonData.OK_DONE);
+        getDialogPane().getButtonTypes().addAll(okButtonType, ButtonType.CANCEL);
 
         GridPane grid = new GridPane();
         grid.setHgap(10);
@@ -29,7 +31,11 @@ public class EditHomeVisitDialog extends Dialog<Void> {
         grid.setPadding(new Insets(20, 150, 10, 10));
 
         fullNameField = new TextField(ticket.getFullName());
+        fullNameField.setPromptText("Иванов Иван Иванович");
+
         officeField = new TextField(String.valueOf(ticket.getOffice()));
+        officeField.setPromptText("104 (или 104а или 104-а)");
+
         urgencyComboBox = new ComboBox<>();
         urgencyComboBox.getItems().addAll(0, 1, 2, 3);
         urgencyComboBox.setValue(ticket.getUrgency());
@@ -37,7 +43,7 @@ public class EditHomeVisitDialog extends Dialog<Void> {
 
         grid.add(new Label("ФИО:"), 0, 0);
         grid.add(fullNameField, 1, 0);
-        grid.add(new Label("Кабинет:"), 0, 1);
+        grid.add(new Label("Участок/Кабинет врача:"), 0, 1);
         grid.add(officeField, 1, 1);
         grid.add(new Label("Срочность:"), 0, 2);
         grid.add(urgencyComboBox, 1, 2);
@@ -46,19 +52,46 @@ public class EditHomeVisitDialog extends Dialog<Void> {
 
         getDialogPane().setContent(grid);
         fullNameField.requestFocus();
+
+        fullNameField.textProperty().addListener((obs, old, newVal) -> validate());
+        officeField.textProperty().addListener((obs, old, newVal) -> validate());
+        addressField.textProperty().addListener((obs, old, newVal) -> validate());
+
+        setResultConverter(dialogButton -> {
+            if (dialogButton == okButtonType) {
+                return ButtonType.OK;
+            }
+            return null;
+        });
+
+        validate();
     }
 
-    public String getFullName() { return fullNameField.getText(); }
+    private void validate() {
+        String fullName = fullNameField.getText().trim();
+        String officeText = officeField.getText().trim();
+        String address = addressField.getText().trim();
 
-    public int getOffice() {
-        try {
-            return Integer.parseInt(officeField.getText());
-        } catch (NumberFormatException e) {
-            return -1;
-        }
+        boolean valid = Validators.isValidFullName(fullName)
+                && Validators.isValidOffice(officeText);
+
+        Button okButton = (Button) getDialogPane().lookupButton(okButtonType);
+        okButton.setDisable(!valid);
     }
 
-    public int getUrgency() { return urgencyComboBox.getValue(); }
+    public String getFullName() {
+        return fullNameField.getText().trim();
+    }
 
-    public String getAddress() { return addressField.getText(); }
+    public String getOffice() {
+        return officeField.getText().trim();
+    }
+
+    public int getUrgency() {
+        return urgencyComboBox.getValue();
+    }
+
+    public String getAddress() {
+        return addressField.getText().trim();
+    }
 }

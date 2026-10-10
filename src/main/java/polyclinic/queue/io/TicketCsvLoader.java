@@ -3,6 +3,8 @@ package polyclinic.queue.io;
 import polyclinic.queue.model.Ticket;
 import polyclinic.queue.model.HomeVisitTicket;
 import polyclinic.queue.model.ClosedTicket;
+import polyclinic.queue.model.ClosedHomeVisitTicket;
+import polyclinic.queue.util.Validators;
 
 import java.io.*;
 import java.time.LocalDateTime;
@@ -20,6 +22,7 @@ public class TicketCsvLoader {
     private static final String TYPE_REGULAR = "Обычный";
     private static final String TYPE_HOME = "На дому";
     private static final String TYPE_CLOSED = "Закрытый";
+    private static final String TYPE_CLOSED_HOME = "Закрытый на дому";
 
     public static List<Ticket> loadFromFile(String filePath) throws IOException, CsvParseException {
         List<Ticket> tickets = new ArrayList<>();
@@ -44,7 +47,7 @@ public class TicketCsvLoader {
 
     public static void saveToFile(String filePath, List<Ticket> tickets) throws IOException {
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(filePath))) {
-            writer.write("cardNumber,fullName,office,urgency,takenAt,type,address,closedAt");
+            writer.write("cardNumber;fullName;office;urgency;takenAt;type;address;closedAt");
             writer.newLine();
 
             for (Ticket ticket : tickets) {
@@ -52,7 +55,11 @@ public class TicketCsvLoader {
                 String address = "";
                 String closedAt = "";
 
-                if (ticket instanceof HomeVisitTicket homeTicket) {
+                if (ticket instanceof ClosedHomeVisitTicket closedHomeTicket) {
+                    type = TYPE_CLOSED_HOME;
+                    address = closedHomeTicket.getAddress();
+                    closedAt = closedHomeTicket.getClosedAt().format(DATE_FORMATTER);
+                } else if (ticket instanceof HomeVisitTicket homeTicket) {
                     type = TYPE_HOME;
                     address = homeTicket.getAddress();
                 } else if (ticket instanceof ClosedTicket closedTicket) {
@@ -65,7 +72,7 @@ public class TicketCsvLoader {
                 String line = String.join(DELIMITER,
                         ticket.getCardNumber(),
                         ticket.getFullName(),
-                        String.valueOf(ticket.getOffice()),
+                        ticket.getOffice(),
                         String.valueOf(ticket.getUrgency()),
                         ticket.getTakenAt().format(DATE_FORMATTER),
                         type,
@@ -79,7 +86,7 @@ public class TicketCsvLoader {
     }
 
     private static Ticket parseLine(String line, int lineNumber) throws CsvParseException {
-        String[] parts = line.split(DELIMITER, -1);  // -1 сохраняет пустые поля в конце
+        String[] parts = line.split(DELIMITER, -1);
 
         if (parts.length != EXPECTED_FIELDS) {
             throw new WrongFieldCountException(lineNumber, EXPECTED_FIELDS, parts.length);
@@ -87,18 +94,18 @@ public class TicketCsvLoader {
 
         String cardNumber = parts[0].trim();
         String fullName = parts[1].trim();
-        String officeStr = parts[2].trim();
+        String office = parts[2].trim();
         String urgencyStr = parts[3].trim();
         String takenAtStr = parts[4].trim();
         String type = parts[5].trim();
         String address = parts[6].trim();
         String closedAtStr = parts[7].trim();
 
-        int office;
-        try {
-            office = Integer.parseInt(officeStr);
-        } catch (NumberFormatException e) {
-            throw new BadNumberException(lineNumber, "office", officeStr);
+        if (!Validators.isValidFullName(fullName)) {
+            throw new InvalidFullNameException(lineNumber, fullName);
+        }
+        if (!Validators.isValidOffice(office)) {
+            throw new InvalidOfficeException(lineNumber, office);
         }
 
         int urgency;
@@ -157,6 +164,36 @@ public class TicketCsvLoader {
                     };
                 }
                 yield ClosedTicket.createWithTime(cardNumber, fullName, office, urgency, takenAt, closedAt);
+            }
+            case TYPE_CLOSED_HOME -> {
+                if (address.isEmpty()) {
+                    throw new CsvParseException(lineNumber, "Для закрытого талона на дому должен быть указан адрес") {
+                        @Override
+                        public String getErrorCode() {
+                            return "MISSING_ADDRESS";
+                        }
+                    };
+                }
+                if (closedAtStr.isEmpty()) {
+                    throw new CsvParseException(lineNumber, "Для закрытого талона должно быть указано время закрытия") {
+                        @Override
+                        public String getErrorCode() {
+                            return "MISSING_CLOSED_AT";
+                        }
+                    };
+                }
+                LocalDateTime closedAt;
+                try {
+                    closedAt = LocalDateTime.parse(closedAtStr, DATE_FORMATTER);
+                } catch (DateTimeParseException e) {
+                    throw new CsvParseException(lineNumber, "Неверный формат времени закрытия: " + closedAtStr) {
+                        @Override
+                        public String getErrorCode() {
+                            return "BAD_DATE_FORMAT";
+                        }
+                    };
+                }
+                yield ClosedHomeVisitTicket.createWithTime(cardNumber, fullName, office, urgency, address, takenAt, closedAt);
             }
             case TYPE_REGULAR -> Ticket.createWithTime(cardNumber, fullName, office, urgency, takenAt);
             default -> throw new CsvParseException(lineNumber, "Неизвестный тип талона: " + type) {

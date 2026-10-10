@@ -20,8 +20,6 @@ public class BinaryMinHeap {
         this(10);
     }
 
-
-
     private int parent(int i) {
         return (i - 1) / 2;
     }
@@ -54,19 +52,28 @@ public class BinaryMinHeap {
         }
     }
 
-
-
     public void insert(Ticket ticket) {
         if (ticket == null) {
             throw new IllegalArgumentException("Ticket cannot be null");
         }
 
-        ensureCapacity();
+        if (contains(ticket.getCardNumber())) {
+            throw new DuplicateTicketException(ticket.getCardNumber());  // ← своё исключение
+        }
 
+        ensureCapacity();
         heap[size] = ticket;
         size++;
-
         siftUp(size - 1);
+    }
+
+    public boolean contains(String cardNumber) {
+        for (int i = 0; i < size; i++) {
+            if (heap[i].getCardNumber().equals(cardNumber)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void siftUp(int i) {
@@ -135,8 +142,6 @@ public class BinaryMinHeap {
         return size;
     }
 
-
-
     public Ticket[] getKMostUrgent(int k) {
         if (k <= 0) {
             throw new IllegalArgumentException("K must be positive");
@@ -196,8 +201,6 @@ public class BinaryMinHeap {
             insert(other.heap[i]);
         }
     }
-
-
 
     public void printHeap() {
         System.out.println("Binary Min-Heap");

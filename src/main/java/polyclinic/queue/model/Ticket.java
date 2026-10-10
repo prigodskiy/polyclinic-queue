@@ -7,16 +7,19 @@ public class Ticket implements Comparable<Ticket>, Editable {
 
     private final String cardNumber;
     private final String fullName;
-    private final int office;
+    private final String office;
     private final int urgency;
     private final LocalDateTime takenAt;
 
-    public Ticket(String cardNumber, String fullName, int office, int urgency) {
+    public Ticket(String cardNumber, String fullName, String office, int urgency) {
         if (cardNumber == null || cardNumber.isBlank()) {
             throw new IllegalArgumentException("Card number cannot be empty");
         }
         if (fullName == null || fullName.isBlank()) {
             throw new IllegalArgumentException("Full name cannot be empty");
+        }
+        if (office == null || office.isBlank()) {
+            throw new IllegalArgumentException("Office cannot be empty");
         }
         if (urgency < 0 || urgency > 3) {
             throw new IllegalArgumentException("Urgency must be in range [0, 3]");
@@ -29,12 +32,15 @@ public class Ticket implements Comparable<Ticket>, Editable {
         this.takenAt = LocalDateTime.now();
     }
 
-    Ticket(String cardNumber, String fullName, int office, int urgency, LocalDateTime takenAt) {
+    Ticket(String cardNumber, String fullName, String office, int urgency, LocalDateTime takenAt) {
         if (cardNumber == null || cardNumber.isBlank()) {
             throw new IllegalArgumentException("Card number cannot be empty");
         }
         if (fullName == null || fullName.isBlank()) {
             throw new IllegalArgumentException("Full name cannot be empty");
+        }
+        if (office == null || office.isBlank()) {
+            throw new IllegalArgumentException("Office cannot be empty");
         }
         if (urgency < 0 || urgency > 3) {
             throw new IllegalArgumentException("Urgency must be in range [0, 3]");
@@ -52,7 +58,7 @@ public class Ticket implements Comparable<Ticket>, Editable {
 
     public String getCardNumber() { return cardNumber; }
     public String getFullName() { return fullName; }
-    public int getOffice() { return office; }
+    public String getOffice() { return office; }
     public int getUrgency() { return urgency; }
     public LocalDateTime getTakenAt() { return takenAt; }
 
@@ -63,16 +69,16 @@ public class Ticket implements Comparable<Ticket>, Editable {
         return new Ticket(this.cardNumber, this.fullName, this.office, newUrgency, this.takenAt);
     }
 
-    public Ticket withChanges(String newFullName, Integer newOffice, Integer newUrgency) {
+    public Ticket withChanges(String newFullName, String newOffice, Integer newUrgency) {
         String fullName = (newFullName != null) ? newFullName : this.fullName;
-        int office = (newOffice != null) ? newOffice : this.office;
+        String office = (newOffice != null) ? newOffice : this.office;
         int urgency = (newUrgency != null) ? newUrgency : this.urgency;
 
         return new Ticket(this.cardNumber, fullName, office, urgency, this.takenAt);
     }
 
     public static Ticket createWithTime(String cardNumber, String fullName,
-                                        int office, int urgency, LocalDateTime takenAt) {
+                                        String office, int urgency, LocalDateTime takenAt) {
         return new Ticket(cardNumber, fullName, office, urgency, takenAt);
     }
 
@@ -89,9 +95,10 @@ public class Ticket implements Comparable<Ticket>, Editable {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         Ticket ticket = (Ticket) o;
-        return office == ticket.office && urgency == ticket.urgency
+        return urgency == ticket.urgency
                 && Objects.equals(cardNumber, ticket.cardNumber)
-                && Objects.equals(fullName, ticket.fullName);
+                && Objects.equals(fullName, ticket.fullName)
+                && Objects.equals(office, ticket.office);
     }
 
     @Override
@@ -101,7 +108,7 @@ public class Ticket implements Comparable<Ticket>, Editable {
 
     @Override
     public String toString() {
-        return String.format("Ticket{card='%s', patient='%s', office=%d, urgency=%d, time=%s}",
+        return String.format("Ticket{card='%s', patient='%s', office='%s', urgency=%d, time=%s}",
                 cardNumber, fullName, office, urgency, takenAt);
     }
 }
