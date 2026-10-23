@@ -1,7 +1,9 @@
 package ru.polyclinic.queue.model;
 
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
@@ -9,8 +11,9 @@ import java.util.regex.Pattern;
  * проверку вызывают и GUI (диалог ошибок), и CSV-загрузчик (битые строки),
  * и сервис перед вставкой в очередь — правила не должны разъезжаться.
  *
- * <p>Возвращает список нарушений (пустой = корректно), а не бросает
- * исключение: загрузчик CSV собирает ошибки построчно в предупреждения.
+ * <p>Два входа: {@link #validate(Ticket)} — общий список строк (CSV/сервис),
+ * {@link #validateByField(Ticket)} — то же самое, но с привязкой к полю
+ * (диалог правки показывает ошибку ровно под своим инпутом).
  */
 public final class TicketValidator {
 
@@ -26,47 +29,70 @@ public final class TicketValidator {
     private TicketValidator() {
     }
 
+    /** Плоский список нарушений — используется CSV-загрузчиком и QueueService. */
     public static List<String> validate(Ticket ticket) {
         List<String> errors = new ArrayList<>();
+        validateByField(ticket).values().forEach(errors::addAll);
+        return List.copyOf(errors);
+    }
+
+    /** Нарушения с привязкой к полю; пустые поля в карту не попадают. */
+    public static Map<TicketField, List<String>> validateByField(Ticket ticket) {
+        Map<TicketField, List<String>> errors = new EnumMap<>(TicketField.class);
 
         String card = ticket.getCardNumber();
         if (card.isBlank()) {
-            errors.add("Номер карты обязателен");
+            put(errors, TicketField.CARD_NUMBER, "Номер карты обязателен");
         } else if (!card.matches("\\d{4,20}")) {
-            errors.add("Номер карты должен содержать от 4 до 20 цифр");
+            put(errors, TicketField.CARD_NUMBER, "Номер карты должен содержать от 4 до 20 цифр");
         }
 
         String name = ticket.getFullName();
         if (name.isBlank()) {
-            errors.add("ФИО обязательно");
+            put(errors, TicketField.FULL_NAME, "ФИО обязательно");
         } else if (containsLineBreak(name)) {
-            errors.add("ФИО должно занимать одну строку");
+            put(errors, TicketField.FULL_NAME, "ФИО должно занимать одну строку");
         } else if (!FULL_NAME_PATTERN.matcher(name).matches()) {
-            errors.add("ФИО должно содержать 2–3 слова, каждое с заглавной буквы");
+            put(errors, TicketField.FULL_NAME,
+                    "ФИО должно содержать 2–3 слова, каждое с заглавной буквы");
         }
 
         String office = ticket.getOffice();
         if (office.isBlank()) {
-            errors.add("Кабинет обязателен");
+            put(errors, TicketField.OFFICE, "Кабинет обязателен");
         } else if (containsLineBreak(office)) {
-            errors.add("Кабинет должен занимать одну строку");
+            put(errors, TicketField.OFFICE, "Кабинет должен занимать одну строку");
         } else if (!OFFICE_PATTERN.matcher(office).matches()) {
-            errors.add("Кабинет должен быть числом с возможной буквой (например, 104 или 104а)");
+            put(errors, TicketField.OFFICE,
+                    "Кабинет должен быть числом с возможной буквой (например, 104 или 104а)");
         }
 
         int urgency = ticket.getUrgency();
         if (urgency < 0 || urgency > 3) {
-            errors.add("Срочность должна быть от 0 до 3");
+            put(errors, TicketField.URGENCY, "Срочность должна быть от 0 до 3");
         }
 
         if (ticket.getTakenAt() == null) {
-            errors.add("Время взятия обязательно");
+            put(errors, TicketField.TAKEN_AT, "Время взятия обязательно");
         }
 
-        return List.copyOf(errors);
+        if (ticket instanceof HomeVisitTicket home) {
+            String address = home.getAddress();
+            if (address.isBlank()) {
+                put(errors, TicketField.ADDRESS, "Для талона «На дому» нужен адрес");
+            } else if (containsLineBreak(address)) {
+                put(errors, TicketField.ADDRESS, "Адрес должен занимать одну строку");
+            }
+        }
+
+        return errors;
     }
 
     public static boolean containsLineBreak(String value) {
         return value.indexOf('\n') >= 0 || value.indexOf('\r') >= 0;
+    }
+
+    private static void put(Map<TicketField, List<String>> map, TicketField field, String message) {
+        map.computeIfAbsent(field, k -> new ArrayList<>()).add(message);
     }
 }

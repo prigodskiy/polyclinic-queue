@@ -51,6 +51,14 @@ public class Ticket implements Editable {
         return ID_SEQUENCE.getAndIncrement();
     }
 
+    /**
+     * Публичный доступ к генератору id — используется диалогом GUI при создании
+     * нового талона (для правки id берётся из существующей записи).
+     */
+    public static long nextIdForUi() {
+        return nextId();
+    }
+
     public long getId() { return id; }
 
     /** Тип талона — переопределяется в подклассах (без instanceof-цепочек в GUI/IO). */
