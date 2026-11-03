@@ -1,14 +1,27 @@
 package ru.polyclinic.queue.io;
 
-/** Коды ошибок загрузки CSV — один enum вместо десятка классов-исключений. */
+/**
+ * Коды ошибок при работе с CSV.
+ */
 public enum CsvErrorCode {
-    IO_ERROR,
-    MISSING_HEADER,
-    WRONG_FIELD_COUNT,
-    MALFORMED_QUOTES,
-    UNKNOWN_TYPE,
-    BAD_NUMBER,
-    BAD_DATE_TIME,
-    MISSING_ADDRESS,
-    INVALID_TICKET
+    FILE_NOT_FOUND("Файл не найден"),
+    IO_ERROR("Ошибка ввода-вывода"),
+    PARSE_ERROR("Ошибка разбора строки"),
+    DUPLICATE_CARD("Дубликат номера карты"),
+    CANCELLED("Операция отменена");  // ← НОВОЕ
+
+    private final String description;
+
+    CsvErrorCode(String description) {
+        this.description = description;
+    }
+
+    public String getDescription() {
+        return description;
+    }
+
+    @Override
+    public String toString() {
+        return name() + ": " + description;
+    }
 }

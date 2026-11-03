@@ -2,17 +2,22 @@ package ru.polyclinic.queue;
 
 import java.io.File;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
 import javafx.application.Application;
+import javafx.application.Platform;
+import javafx.concurrent.Task;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Label;
+import javafx.scene.control.ProgressBar;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
 import javafx.scene.layout.BorderPane;
@@ -26,21 +31,14 @@ import ru.polyclinic.queue.io.CsvLoadResult;
 import ru.polyclinic.queue.io.CsvRowError;
 import ru.polyclinic.queue.io.TicketCsvException;
 import ru.polyclinic.queue.io.TicketCsvService;
+import ru.polyclinic.queue.model.ClosedTicket;
 import ru.polyclinic.queue.model.Editable;
-import ru.polyclinic.queue.model.HomeVisitTicket;
 import ru.polyclinic.queue.model.Ticket;
-import ru.polyclinic.queue.model.TicketType;
 import ru.polyclinic.queue.service.QueueService;
+import ru.polyclinic.queue.service.TicketGenerator;
 import ru.polyclinic.queue.ui.TicketDialog;
 import ru.polyclinic.queue.ui.TicketTable;
 
-/**
- * JavaFX-приложение «Электронная очередь поликлиники».
- *
- * <p>Tонкий GUI: все решения — в {@link QueueService} и модели. Здесь только
- * кнопки, таблицы и диалоги. Обработка ошибок — через исключения с кодами из io/
- * и человекочитаемые Alert'ы.
- */
 public final class App extends Application {
 
     private final QueueService service = new QueueService();
@@ -48,6 +46,15 @@ public final class App extends Application {
     private final TicketTable table = new TicketTable();
     private final TicketTable archiveTable = new TicketTable(true);
     private final Label statusLabel = new Label("Очередь: 0 · Архив: 0");
+
+    private ProgressBar progressBar;
+    private Button cancelButton;
+    private Task<?> currentTask;
+    private Thread currentThread;
+    private boolean backgroundBusy = false;
+    private volatile boolean cancelled = false;
+    private volatile boolean addPhase = false; // Флаг фазы добавления
+
     private TabPane tabs;
     private Button editButton;
 
@@ -57,7 +64,6 @@ public final class App extends Application {
         root.setCenter(tabs());
         root.setBottom(footer());
 
-        // Стартуем с демо-данными из файла в репозитории (data/demo_tickets.csv).
         File demo = resolveDemoFile();
         if (demo != null) {
             loadFromSilently(demo);
@@ -65,12 +71,11 @@ public final class App extends Application {
         refresh();
 
         Scene scene = new Scene(root, 1040, 620);
-        stage.setTitle("Поликлиника — электронная очередь");
+        stage.setTitle("Электронная очередь поликлиники");
         stage.setScene(scene);
         stage.show();
     }
 
-    /** Две вкладки: живая очередь и read-only архив закрытых талонов. */
     private TabPane tabs() {
         Tab queueTab = new Tab("Очередь", table);
         queueTab.setClosable(false);
@@ -81,26 +86,19 @@ public final class App extends Application {
         return tabs;
     }
 
-    /**
-     * Нижняя панель, три смысловые группы разделены растяжимыми spacer'ами:
-     * 1) принять пациента / создать талон; 2) править/удалить выбранный талон;
-     * 3) файловые операции + счётчики очереди и архива.
-     */
     private HBox footer() {
         Button accept = new Button("Принять пациента");
         accept.setOnAction(e -> acceptNext());
         Button add = new Button("Создать талон");
         add.setOnAction(e -> addTicket());
+        Button generate = new Button("Сгенерировать талоны");
+        generate.setOnAction(e -> generateTickets());
 
         editButton = new Button("Править талон");
         editButton.setOnAction(e -> editSelected());
         Button remove = new Button("Удалить талон");
         remove.setOnAction(e -> removeSelected());
 
-        // Правка доступна только редактируемому талону из живой очереди.
-        // Состояние пересчитываем явно на каждое изменение выделения любой
-        // таблицы, переключение вкладок и любую перерисовку (refresh) —
-        // binding'и молчат, когда строки переставляются местами.
         Runnable updateEditState = this::updateEditButtonState;
         table.getSelectionModel().selectedIndexProperty().addListener(
                 (obs, oldVal, newVal) -> updateEditState.run());
@@ -117,26 +115,33 @@ public final class App extends Application {
         Button saveCsv = new Button("Сохранить CSV");
         saveCsv.setOnAction(e -> saveFile());
 
+        progressBar = new ProgressBar(0);
+        progressBar.setPrefWidth(150);
+        progressBar.setVisible(false);
+
+        cancelButton = new Button("Отмена");
+        cancelButton.setVisible(false);
+        cancelButton.setOnAction(e -> cancelBackgroundTask());
+
         Region spacer1 = new Region();
         Region spacer2 = new Region();
         HBox.setHgrow(spacer1, Priority.ALWAYS);
         HBox.setHgrow(spacer2, Priority.ALWAYS);
 
-        HBox box = new HBox(8, accept, add, spacer1,
+        HBox box = new HBox(8, accept, add, generate, spacer1,
                 editButton, remove, spacer2,
-                loadCsv, appendCsv, saveCsv, statusLabel);
+                progressBar, cancelButton, loadCsv, appendCsv, saveCsv, statusLabel);
         box.setPadding(new Insets(10));
         box.setAlignment(Pos.CENTER);
         return box;
     }
-
-    // ---------- действия ----------
 
     private void addTicket() {
         try {
             Optional<Ticket> result = new TicketDialog(null).showAndWait();
             result.ifPresent(ticket -> {
                 service.add(ticket);
+                service.printStructure();
                 refresh();
             });
         } catch (IllegalArgumentException error) {
@@ -148,9 +153,7 @@ public final class App extends Application {
 
     private void editSelected() {
         Ticket selected = requireSelected();
-        if (selected == null) {
-            return;
-        }
+        if (selected == null) return;
         if (!(selected instanceof Editable)) {
             showError("Закрытый талон", "Закрытые талоны доступны только для просмотра.");
             return;
@@ -159,6 +162,7 @@ public final class App extends Application {
             Optional<Ticket> result = new TicketDialog(selected).showAndWait();
             result.ifPresent(updated -> {
                 service.updateTicket(updated);
+                service.printStructure();
                 refresh();
             });
         } catch (IllegalArgumentException error) {
@@ -168,24 +172,22 @@ public final class App extends Application {
 
     private void removeSelected() {
         Ticket selected = requireSelected();
-        if (selected == null) {
-            return;
-        }
+        if (selected == null) return;
         boolean onQueueTab = isQueueTabActive();
         String what = onQueueTab ? "талон из очереди" : "запись из архива";
         Optional<ButtonType> answer = confirm(Alert.AlertType.CONFIRMATION, "Подтверждение удаления",
                 "Вы точно хотите удалить %s: карта %s, %s?"
                         .formatted(what, selected.getCardNumber(), selected.getFullName()),
                 ButtonType.OK, ButtonType.CANCEL);
-        if (answer.isEmpty() || answer.get() != ButtonType.OK) {
-            return;
-        }
+        if (answer.isEmpty() || answer.get() != ButtonType.OK) return;
+
         boolean removed = onQueueTab
                 ? service.removeByCardNumber(selected.getCardNumber())
                 : service.removeFromArchive(selected.getId());
         if (!removed) {
             showError("Не найдено", "Талон уже удалён.");
         }
+        service.printStructure();
         refresh();
     }
 
@@ -195,6 +197,7 @@ public final class App extends Application {
             return;
         }
         Ticket next = service.acceptNext();
+        service.printStructure();
         new Alert(Alert.AlertType.INFORMATION,
                 "Принимается: " + next.getFullName()
                         + ", кабинет " + next.getOffice()
@@ -202,64 +205,360 @@ public final class App extends Application {
         refresh();
     }
 
-    private void mergeFromFile() {
-        File file = chooseFile("Выберите CSV-файл с талонами для добавления");
-        if (file == null) {
+    // ═══════════════════════════════════════════════════════════════
+    // ГЕНЕРАЦИЯ ТАЛОНОВ
+    // ═══════════════════════════════════════════════════════════════
+
+    private void generateTickets() {
+        if (backgroundBusy) {
+            showError("Занято", "Дождитесь завершения текущей операции.");
             return;
         }
-        try {
-            CsvLoadResult loaded = csv.load(file.toPath());
-            int before = service.queueSize();
-            QueueService donor = new QueueService();
-            donor.loadAll(loaded.tickets());
-            service.merge(donor);
-            refresh();
-            new Alert(Alert.AlertType.INFORMATION,
-                    "Добавлено талонов в очередь: %d (было %d, стало %d).".formatted(
-                            loaded.tickets().size(), before, service.queueSize()))
-                    .showAndWait();
-            warnIfNeeded(loaded);
-        } catch (TicketCsvException | DuplicateTicketException error) {
-            showError("Не удалось добавить талоны", error.getMessage());
-        }
+
+        javafx.scene.control.TextInputDialog dialog = new javafx.scene.control.TextInputDialog("10");
+        dialog.setTitle("Генерация талонов");
+        dialog.setHeaderText("Сколько талонов сгенерировать?");
+        dialog.setContentText("Количество (1 — 100 000):");
+
+        dialog.showAndWait().ifPresent(input -> {
+            try {
+                int count = Integer.parseInt(input.strip());
+                if (count <= 0 || count > 100_000) {
+                    showError("Неверное число", "Введите от 1 до 100 000.");
+                    return;
+                }
+                generateInBackground(count);
+            } catch (NumberFormatException ex) {
+                showError("Ошибка ввода", "Введите целое число.");
+            }
+        });
     }
 
-    /** Кнопка «Загрузить CSV»: выбор файла и полная замена очереди. */
+    private void generateInBackground(int count) {
+        cancelled = false;
+        addPhase = false;
+        backgroundBusy = true;
+        setButtonsDisabled(true);
+        progressBar.setVisible(true);
+        progressBar.setProgress(0);
+        cancelButton.setVisible(true);
+
+        Task<Ticket[]> task = new Task<Ticket[]>() {
+            @Override
+            protected Ticket[] call() {
+                TicketGenerator generator = new TicketGenerator();
+                return generator.generate(count, (current, total) -> {
+                    updateProgress(current, total);
+                });
+            }
+        };
+
+        progressBar.progressProperty().bind(task.progressProperty());
+        currentTask = task;
+
+        task.setOnSucceeded(e -> {
+            if (cancelled) {
+                System.out.println("[ОТМЕНА] Генерация отменена - талоны НЕ добавлены");
+                Platform.runLater(() -> {
+                    new Alert(Alert.AlertType.INFORMATION, "Генерация отменена.").showAndWait();
+                    cleanup();
+                });
+                return;
+            }
+
+            Ticket[] tickets = task.getValue();
+            if (tickets == null || tickets.length == 0) {
+                cleanup();
+                return;
+            }
+
+            // Переходим к фазе добавления
+            addAllTicketsInBackground(tickets, count);
+        });
+
+        task.setOnFailed(e -> {
+            if (cancelled) {
+                Platform.runLater(() -> {
+                    new Alert(Alert.AlertType.INFORMATION, "Генерация отменена.").showAndWait();
+                    cleanup();
+                });
+                return;
+            }
+            Throwable ex = task.getException();
+            String msg = (ex != null) ? ex.getMessage() : "Неизвестная ошибка";
+            Platform.runLater(() -> {
+                showError("Ошибка генерации", msg);
+                cleanup();
+            });
+        });
+
+        task.setOnCancelled(e -> {
+            cancelled = true;
+            Platform.runLater(() -> {
+                new Alert(Alert.AlertType.INFORMATION, "Генерация отменена.").showAndWait();
+                cleanup();
+            });
+        });
+
+        currentThread = new Thread(task);
+        currentThread.setDaemon(true);
+        currentThread.start();
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // ЗАГРУЗКА CSV
+    // ═══════════════════════════════════════════════════════════════
+
     private void openFileDialog() {
-        File file = chooseFile("Выберите CSV-файл с талонами");
-        if (file == null) {
+        if (backgroundBusy) {
+            showError("Занято", "Дождитесь завершения текущей операции.");
             return;
         }
+
+        File file = chooseFile("Выберите CSV-файл с талонами");
+        if (file == null) return;
+
         if (!service.isQueueEmpty()) {
             Optional<ButtonType> answer = confirm(Alert.AlertType.CONFIRMATION, "Загрузка из CSV",
                     "Текущая очередь будет заменена содержимым файла. Продолжить?",
                     ButtonType.YES, ButtonType.NO);
-            if (answer.isEmpty() || answer.get() != ButtonType.YES) {
+            if (answer.isEmpty() || answer.get() != ButtonType.YES) return;
+        }
+
+        loadInBackground(file, true);
+    }
+
+    private void mergeFromFile() {
+        if (backgroundBusy) {
+            showError("Занято", "Дождитесь завершения текущей операции.");
+            return;
+        }
+
+        File file = chooseFile("Выберите CSV-файл с талонами для добавления");
+        if (file == null) return;
+
+        loadInBackground(file, false);
+    }
+
+    private void loadInBackground(File file, boolean replace) {
+        cancelled = false;
+        addPhase = false;
+        backgroundBusy = true;
+        setButtonsDisabled(true);
+        progressBar.setVisible(true);
+        progressBar.setProgress(0);
+        cancelButton.setVisible(true);
+
+        Task<CsvLoadResult> task = new Task<CsvLoadResult>() {
+            @Override
+            protected CsvLoadResult call() throws Exception {
+                return csv.load(file.toPath(), (current, total) -> {
+                    updateProgress(current, total);
+                });
+            }
+        };
+
+        progressBar.progressProperty().bind(task.progressProperty());
+        currentTask = task;
+
+        task.setOnSucceeded(e -> {
+            if (cancelled) {
+                System.out.println("[ОТМЕНА] Загрузка отменена - талоны НЕ добавлены");
+                Platform.runLater(() -> {
+                    new Alert(Alert.AlertType.INFORMATION, "Загрузка отменена.").showAndWait();
+                    cleanup();
+                });
                 return;
             }
-        }
-        loadFrom(file);
-    }
 
-    /** Загрузка файла: заменяет очередь и архив, показывает предупреждения о битых строках. */
-    private void loadFrom(File file) {
-        try {
-            CsvLoadResult loaded = csv.load(file.toPath());
-            service.clearAll();
-            service.loadAll(loaded.tickets());
-            refresh();
+            CsvLoadResult loaded = task.getValue();
+            if (loaded == null || loaded.tickets().isEmpty()) {
+                cleanup();
+                return;
+            }
+
+            if (replace) {
+                service.clearAll();
+            }
+
+            // Переходим к фазе добавления
+            addAllTicketsInBackground(loaded.tickets().toArray(new Ticket[0]), loaded.tickets().size());
             warnIfNeeded(loaded);
-        } catch (TicketCsvException | DuplicateTicketException error) {
-            showError("Загрузка не удалась", error.getMessage());
+        });
+
+        task.setOnFailed(e -> {
+            if (cancelled) {
+                Platform.runLater(() -> {
+                    new Alert(Alert.AlertType.INFORMATION, "Загрузка отменена.").showAndWait();
+                    cleanup();
+                });
+                return;
+            }
+            Throwable ex = task.getException();
+            String msg = (ex != null) ? ex.getMessage() : "Неизвестная ошибка";
+            Platform.runLater(() -> {
+                showError("Ошибка загрузки", msg);
+                cleanup();
+            });
+        });
+
+        task.setOnCancelled(e -> {
+            cancelled = true;
+            Platform.runLater(() -> {
+                new Alert(Alert.AlertType.INFORMATION, "Загрузка отменена.").showAndWait();
+                cleanup();
+            });
+        });
+
+        currentThread = new Thread(task);
+        currentThread.setDaemon(true);
+        currentThread.start();
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // ДОБАВЛЕНИЕ ТАЛОНОВ В ФОНЕ (С ОТКАТОМ ПРИ ОТМЕНЕ)
+    // ═══════════════════════════════════════════════════════════════
+
+    private void addAllTicketsInBackground(Ticket[] tickets, int totalCount) {
+        if (cancelled) {
+            System.out.println("[ОТМЕНА] Отменено перед добавлением - талоны НЕ добавлены");
+            cleanup();
+            return;
+        }
+
+        addPhase = true; // Включаем фазу добавления
+
+        Task<int[]> addTask = new Task<int[]>() {
+            @Override
+            protected int[] call() {
+                List<Ticket> addedQueue = new ArrayList<>();
+                List<ClosedTicket> addedArchive = new ArrayList<>();
+
+                for (int i = 0; i < tickets.length; i++) {
+                    // Проверяем отмену на КАЖДОЙ итерации
+                    if (cancelled) {
+                        System.out.println("[ОТМЕНА] Откат " + (addedQueue.size() + addedArchive.size()) + " талонов");
+
+                        // Откатываем добавленные талоны
+                        for (Ticket t : addedQueue) {
+                            service.removeByCardNumber(t.getCardNumber());
+                        }
+                        for (ClosedTicket c : addedArchive) {
+                            service.removeFromArchive(c.getId());
+                        }
+
+                        // Возвращаем: 0 добавлено, 0 в архив, флаг отмены (-1)
+                        return new int[]{0, 0, -1};
+                    }
+
+                    Ticket t = tickets[i];
+                    if (t instanceof ClosedTicket closed) {
+                        service.addToArchive(closed);
+                        addedArchive.add(closed);
+                    } else {
+                        try {
+                            service.add(t);
+                            addedQueue.add(t); // Запоминаем для возможного отката
+                        } catch (DuplicateTicketException ignored) { }
+                    }
+
+                    if (i % 500 == 0 || i == tickets.length - 1) {
+                        updateProgress(i + 1, tickets.length);
+                    }
+                }
+
+                return new int[]{addedQueue.size(), addedArchive.size(), 0};
+            }
+        };
+
+        progressBar.progressProperty().unbind();
+        progressBar.progressProperty().bind(addTask.progressProperty());
+        currentTask = addTask;
+
+        addTask.setOnSucceeded(e -> {
+            addPhase = false;
+            int[] result = addTask.getValue();
+            int added = result[0];
+            int archived = result[1];
+            boolean wasCancelled = result[2] == -1;
+
+            service.printStructure();
+            Platform.runLater(() -> {
+                refresh();
+                if (wasCancelled) {
+                    new Alert(Alert.AlertType.INFORMATION, "Добавление отменено. Очередь не изменена.").showAndWait();
+                } else {
+                    String msg = "Добавлено: " + added + " из " + totalCount;
+                    if (archived > 0) {
+                        msg += " (+" + archived + " в архив)";
+                    }
+                    new Alert(Alert.AlertType.INFORMATION, msg).showAndWait();
+                }
+                cleanup();
+            });
+        });
+
+        addTask.setOnFailed(e -> {
+            addPhase = false;
+            Platform.runLater(() -> {
+                Throwable ex = addTask.getException();
+                showError("Ошибка добавления", ex != null ? ex.getMessage() : "Неизвестная ошибка");
+                cleanup();
+            });
+        });
+
+        // setOnCancelled() здесь не используется, так как мы НЕ отменяем поток
+        // через Task.cancel() на этой фазе (чтобы дать ему время на откат).
+
+        currentThread = new Thread(addTask);
+        currentThread.setDaemon(true);
+        currentThread.start();
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // ОТМЕНА И ОЧИСТКА
+    // ═══════════════════════════════════════════════════════════════
+
+    private void cancelBackgroundTask() {
+        System.out.println("[ОТМЕНА] cancelBackgroundTask() вызван");
+        cancelled = true;
+
+        // Если мы в фазе добавления, мы НЕ прерываем поток жестко,
+        // чтобы он успел откатить изменения. Он сам завершится, увидев cancelled = true.
+        if (!addPhase) {
+            if (currentTask != null) {
+                currentTask.cancel();
+            }
+            if (currentThread != null) {
+                currentThread.interrupt();
+            }
         }
     }
 
-    /** Тихая загрузка стартового демо-файла (без диалогов). */
-    private void loadFromSilently(File file) {
-        try {
-            service.loadAll(csv.load(file.toPath()).tickets());
-        } catch (TicketCsvException | DuplicateTicketException error) {
-            // стартуем с пустой очередью — это не критично
+    private void cleanup() {
+        if (progressBar != null) {
+            progressBar.progressProperty().unbind();
+            progressBar.setProgress(0);
+            progressBar.setVisible(false);
+        }
+        if (cancelButton != null) {
+            cancelButton.setVisible(false);
+        }
+        backgroundBusy = false;
+        addPhase = false; // Сбрасываем флаг
+        setButtonsDisabled(false);
+        currentTask = null;
+        currentThread = null;
+    }
+
+    private void setButtonsDisabled(boolean disabled) {
+        if (table.getScene() == null) return;
+        Node[] buttons = table.getScene().getRoot()
+                .lookupAll(".button").toArray(new Node[0]);
+        for (Node node : buttons) {
+            if (node instanceof Button btn && btn != cancelButton) {
+                btn.setDisable(disabled);
+            }
         }
     }
 
@@ -269,17 +568,13 @@ public final class App extends Application {
         chooser.setInitialFileName("tickets.csv");
         javafx.stage.Window window = table.getScene() != null ? table.getScene().getWindow() : null;
         File file = chooser.showSaveDialog(window);
-        if (file == null) {
-            return;
-        }
+        if (file == null) return;
         try {
             csv.save(Path.of(file.toURI()), service.exportAll());
         } catch (TicketCsvException error) {
             showError("Сохранение не удалось", error.getMessage());
         }
     }
-
-    // ---------- служебное ----------
 
     private void refresh() {
         table.refresh(service.snapshot());
@@ -291,13 +586,10 @@ public final class App extends Application {
 
     private File resolveDemoFile() {
         File f = new File("data/demo_tickets.csv");
-        if (!f.isFile()) {
-            f = new File("../data/demo_tickets.csv");
-        }
+        if (!f.isFile()) f = new File("../data/demo_tickets.csv");
         return f.isFile() ? f : null;
     }
 
-    /** Выбранный талон в активной вкладке или null + сообщение. */
     private Ticket requireSelected() {
         TicketTable active = isQueueTabActive() ? table : archiveTable;
         Ticket selected = active.getSelectionModel().getSelectedItem();
@@ -312,11 +604,8 @@ public final class App extends Application {
         return tabs.getSelectionModel().getSelectedIndex() == 0;
     }
 
-    /**
-     * Активен ли редактируемый талон: вкладка «Очередь», выделение есть,
-     * объект реализует Editable (закрытый талон — нет).
-     */
     private void updateEditButtonState() {
+        if (editButton == null) return;
         boolean editable = isQueueTabActive() && table.isEditableSelected();
         editButton.setDisable(!editable);
     }
@@ -328,22 +617,17 @@ public final class App extends Application {
         return chooser.showOpenDialog(table.getScene().getWindow());
     }
 
-    /**
-     * Предупреждение после загрузки/добавления: сколько строк пропущено и почему.
-     * Одна ошибка — одна строка списка (номер строки, код, текст).
-     */
     private void warnIfNeeded(CsvLoadResult loaded) {
         List<CsvRowError> errors = loaded.errors();
-        if (errors.isEmpty()) {
-            return;
-        }
+        if (errors.isEmpty()) return;
+
         StringBuilder details = new StringBuilder();
         for (CsvRowError error : errors) {
             details.append(error).append('\n');
         }
         Alert alert = new Alert(Alert.AlertType.WARNING);
         alert.setTitle("Есть пропущенные строки");
-        alert.setHeaderText("Загружено корректных: %d, пропущено битых: %d."
+        alert.setHeaderText("Загружено: %d, пропущено: %d."
                 .formatted(loaded.tickets().size(), errors.size()));
         alert.setContentText(details.toString());
         alert.getDialogPane().setPrefWidth(640);
@@ -361,6 +645,15 @@ public final class App extends Application {
         Alert alert = new Alert(Alert.AlertType.ERROR, message, ButtonType.OK);
         alert.setHeaderText(header);
         alert.showAndWait();
+    }
+
+    private void loadFromSilently(File file) {
+        try {
+            service.loadAll(csv.load(file.toPath()).tickets());
+            service.printStructure();
+        } catch (TicketCsvException | DuplicateTicketException error) {
+            // стартуем с пустой очередью
+        }
     }
 
     public static void main(String[] args) {

@@ -3,272 +3,170 @@ package ru.polyclinic.queue.io;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
+import java.util.function.BiConsumer;
 
 import ru.polyclinic.queue.model.ClosedTicket;
 import ru.polyclinic.queue.model.HomeVisitTicket;
 import ru.polyclinic.queue.model.Ticket;
 import ru.polyclinic.queue.model.TicketType;
-import ru.polyclinic.queue.model.TicketValidator;
 
 /**
- * CSV-кодек талонов — ЕДИНСТВЕННОЕ место, где модель превращается в строки.
- *
- * <p>Формат: {@code id;type;card_number;patient_name;office;urgency;taken_at;address}.
- * Колонка {@code type} — имя {@link TicketType}, без магических строк;
- * адрес пуст для обычных и закрытых немобильных талонов, поэтому адрес
- * закрытого «домашнего» талона не теряется (четвёртый класс не нужен).
- *
- * <p>Политика ошибок (лаба 1): заголовок обязателен — битый заголовок это
- * исключение; битые СТРОКИ пропускаются и собираются в warnings
- * ({@link CsvLoadResult}), GUI показывает их списком.
- *
- * <p>Сохранение атомарное: запись во временный файл + rename — очередь не
- * потеряется, если процесс упадёт посреди записи.
+ * Сервис для загрузки/сохранения талонов в CSV.
+ * Формат: id;type;card_number;patient_name;office;urgency;taken_at;address
  */
-public final class TicketCsvService {
+public class TicketCsvService {
 
-    private static final char DELIMITER = ';';
-    private static final List<String> HEADER = List.of(
-            "id", "type", "card_number", "patient_name", "office", "urgency", "taken_at", "address");
+    private static final String SEPARATOR = ";";
+    private static final String HEADER = "id;type;card_number;patient_name;office;urgency;taken_at;address";
 
+    /**
+     * Загрузка CSV без прогресса (обратная совместимость).
+     */
     public CsvLoadResult load(Path path) throws TicketCsvException {
+        return load(path, null);
+    }
+
+    /**
+     * Загрузка CSV с колбэком прогресса.
+     *
+     * @param path     путь к файлу
+     * @param progress колбэк (прочитано строк, всего строк); может быть null
+     * @return результат загрузки
+     * @throws TicketCsvException если файл не найден или не читается
+     */
+    public CsvLoadResult load(Path path, BiConsumer<Integer, Integer> progress) throws TicketCsvException {
+        if (!Files.exists(path)) {
+            throw new TicketCsvException(CsvErrorCode.FILE_NOT_FOUND, "Файл не найден: " + path);
+        }
+
         List<Ticket> tickets = new ArrayList<>();
         List<CsvRowError> errors = new ArrayList<>();
 
-        try (BufferedReader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
-            validateHeader(reader.readLine());
+        try (BufferedReader reader = Files.newBufferedReader(path)) {
+            // Пропускаем заголовок (если есть)
+            String headerLine = reader.readLine();
+            // Если заголовка нет или он неправильный — просто продолжаем
 
+            // Считаем строки для прогресса
+            List<String> lines = new ArrayList<>();
             String line;
-            int lineNumber = 1;
             while ((line = reader.readLine()) != null) {
-                lineNumber++;
-                if (line.isBlank()) {
-                    continue;
-                }
-                try {
-                    tickets.add(parseTicket(line));
-                } catch (TicketCsvException error) {
-                    errors.add(new CsvRowError(lineNumber, error.getCode(), error.getMessage()));
+                if (!line.isBlank()) {
+                    lines.add(line);
                 }
             }
-        } catch (IOException error) {
-            throw new TicketCsvException(CsvErrorCode.IO_ERROR,
-                    "Не удалось прочитать файл: " + path, error);
+
+            int total = lines.size();
+            int processed = 0;
+
+            for (int i = 0; i < lines.size(); i++) {
+                // Проверка отмены — проверяем и interrupt, и cancelled
+                if (Thread.currentThread().isInterrupted()) {
+                    throw new TicketCsvException(CsvErrorCode.CANCELLED, "Загрузка отменена пользователем");
+                }
+
+                String currentLine = lines.get(i);
+                int lineNumber = i + 2; // +2: заголовок + 1-based
+
+                try {
+                    Ticket ticket = parseLine(currentLine, lineNumber);
+                    tickets.add(ticket);
+                } catch (Exception e) {
+                    errors.add(new CsvRowError(lineNumber, CsvErrorCode.PARSE_ERROR, e.getMessage()));
+                }
+
+                processed++;
+                // Обновляем прогресс чаще — каждые 50 строк
+                if (progress != null && (processed % 50 == 0 || processed == total)) {
+                    progress.accept(processed, total);
+                }
+            }
+
+        } catch (IOException e) {
+            throw new TicketCsvException(CsvErrorCode.IO_ERROR, "Ошибка чтения файла: " + e.getMessage());
         }
 
         return new CsvLoadResult(tickets, errors);
     }
 
-    public void save(Path path, List<Ticket> tickets) throws TicketCsvException {
-        Path absolutePath = path.toAbsolutePath();
-        Path parent = absolutePath.getParent();
-        if (parent == null) {
-            throw new TicketCsvException(CsvErrorCode.IO_ERROR, "Не удалось определить папку файла");
+    private Ticket parseLine(String line, int lineNumber) {
+        String[] parts = line.split(SEPARATOR, -1);
+        if (parts.length < 7) {
+            throw new IllegalArgumentException("Строка %d: недостаточно полей (ожидается 7-8, получено %d)"
+                    .formatted(lineNumber, parts.length));
         }
 
-        Path temporaryFile = null;
         try {
-            Files.createDirectories(parent);
-            temporaryFile = Files.createTempFile(parent, ".tickets-", ".tmp");
-            try (BufferedWriter writer = Files.newBufferedWriter(temporaryFile, StandardCharsets.UTF_8)) {
-                writer.write(String.join(Character.toString(DELIMITER), HEADER));
-                writer.newLine();
-                for (Ticket ticket : tickets) {
-                    writer.write(formatTicket(ticket));
-                    writer.newLine();
-                }
-            }
-            moveReplacing(temporaryFile, absolutePath);
-            temporaryFile = null;
-        } catch (IOException error) {
-            throw new TicketCsvException(CsvErrorCode.IO_ERROR,
-                    "Не удалось сохранить файл: " + path, error);
-        } finally {
-            if (temporaryFile != null) {
-                try {
-                    Files.deleteIfExists(temporaryFile);
-                } catch (IOException ignored) {
-                    temporaryFile.toFile().deleteOnExit();
-                }
-            }
-        }
-    }
+            long id = Long.parseLong(parts[0].strip());
+            String typeStr = parts[1].strip();
+            String cardNumber = parts[2].strip();
+            String patientName = parts[3].strip();
+            String office = parts[4].strip();
+            int urgency = Integer.parseInt(parts[5].strip());
+            LocalDateTime takenAt = LocalDateTime.parse(parts[6].strip());
+            String address = parts.length > 7 ? parts[7].strip() : null;
 
-    // ---------- разбор ----------
+            TicketType type = TicketType.valueOf(typeStr);
 
-    private void validateHeader(String headerLine) throws TicketCsvException {
-        if (headerLine == null) {
-            throw new TicketCsvException(CsvErrorCode.MISSING_HEADER, "Файл пуст");
-        }
-        String normalized = headerLine.startsWith("\uFEFF") ? headerLine.substring(1) : headerLine;
-        if (!parseLine(normalized).equals(HEADER)) {
-            throw new TicketCsvException(CsvErrorCode.MISSING_HEADER,
-                    "Ожидается заголовок: " + String.join(Character.toString(DELIMITER), HEADER));
-        }
-    }
-
-    private Ticket parseTicket(String line) throws TicketCsvException {
-        List<String> fields = parseLine(line);
-        if (fields.size() != HEADER.size()) {
-            throw new TicketCsvException(CsvErrorCode.WRONG_FIELD_COUNT,
-                    "Ожидалось полей: %d, получено: %d".formatted(HEADER.size(), fields.size()));
-        }
-
-        long id = parseId(fields.get(0));
-
-        TicketType type;
-        try {
-            type = TicketType.valueOf(fields.get(1).strip().toUpperCase(Locale.ROOT));
-        } catch (IllegalArgumentException error) {
-            throw new TicketCsvException(CsvErrorCode.UNKNOWN_TYPE, "Неизвестный тип: " + fields.get(1));
-        }
-
-        String cardNumber = fields.get(2);
-        String patientName = fields.get(3);
-        String office = fields.get(4);
-        int urgency = parseUrgency(fields.get(5));
-        // Вилка 0–3 проверяется конструктором Ticket как IllegalArgumentException —
-        // перехватываем её здесь, иначе одна битая строка уронит всю загрузку.
-        if (urgency < 0 || urgency > 3) {
-            throw new TicketCsvException(CsvErrorCode.INVALID_TICKET,
-                    "Срочность должна быть от 0 до 3, получено: " + urgency);
-        }
-        LocalDateTime takenAt = parseTakenAt(fields.get(6));
-        String address = fields.get(7);
-
-        Ticket ticket;
-        try {
-            ticket = switch (type) {
+            return switch (type) {
                 case REGULAR -> new Ticket(id, cardNumber, patientName, office, urgency, takenAt);
                 case HOME_VISIT -> {
-                    if (address.isBlank()) {
-                        throw new TicketCsvException(CsvErrorCode.MISSING_ADDRESS,
-                                "Для талона «На дому» должен быть указан адрес");
+                    if (address == null || address.isBlank()) {
+                        throw new IllegalArgumentException("Строка %d: для талона на дому нужен адрес".formatted(lineNumber));
                     }
                     yield new HomeVisitTicket(id, cardNumber, patientName, office, urgency, takenAt, address);
                 }
                 case CLOSED -> new ClosedTicket(id, cardNumber, patientName, office, urgency, takenAt, address);
             };
-        } catch (IllegalArgumentException | NullPointerException error) {
-            throw new TicketCsvException(CsvErrorCode.INVALID_TICKET,
-                    error.getMessage() == null ? "Битые поля строки" : error.getMessage());
-        }
 
-        List<String> validationErrors = ticket.validate();
-        if (!validationErrors.isEmpty()) {
-            throw new TicketCsvException(CsvErrorCode.INVALID_TICKET, String.join("; ", validationErrors));
+        } catch (DateTimeParseException e) {
+            throw new IllegalArgumentException("Строка %d: неверный формат даты: %s".formatted(lineNumber, parts[6]));
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Строка %d: неверный числовой формат: %s".formatted(lineNumber, e.getMessage()));
         }
-        return ticket;
     }
 
-    /** Разбор строки с поддержкой кавычек ("...", "" внутри) — свой алгоритм, без split. */
-    private List<String> parseLine(String line) throws TicketCsvException {
-        List<String> fields = new ArrayList<>();
-        StringBuilder current = new StringBuilder();
-        boolean quoted = false;
+    /**
+     * Сохранение талонов в CSV.
+     */
+    public void save(Path path, List<Ticket> tickets) throws TicketCsvException {
+        try (BufferedWriter writer = Files.newBufferedWriter(path)) {
+            writer.write(HEADER);
+            writer.newLine();
 
-        for (int index = 0; index < line.length(); index++) {
-            char symbol = line.charAt(index);
-            if (symbol == '"') {
-                if (quoted && index + 1 < line.length() && line.charAt(index + 1) == '"') {
-                    current.append('"');
-                    index++;
-                } else if (!quoted && !current.isEmpty()) {
-                    throw new TicketCsvException(CsvErrorCode.MALFORMED_QUOTES,
-                            "Кавычка должна находиться в начале поля");
-                } else {
-                    quoted = !quoted;
-                }
-            } else if (symbol == DELIMITER && !quoted) {
-                fields.add(current.toString());
-                current.setLength(0);
-            } else {
-                current.append(symbol);
+            for (Ticket ticket : tickets) {
+                writer.write(formatLine(ticket));
+                writer.newLine();
             }
-        }
 
-        if (quoted) {
-            throw new TicketCsvException(CsvErrorCode.MALFORMED_QUOTES, "Незакрытая кавычка");
-        }
-        fields.add(current.toString());
-        return fields;
-    }
-
-    private long parseId(String value) throws TicketCsvException {
-        try {
-            return Long.parseLong(value.strip());
-        } catch (NumberFormatException error) {
-            throw new TicketCsvException(CsvErrorCode.BAD_NUMBER, "Id должен быть целым числом");
+        } catch (IOException e) {
+            throw new TicketCsvException(CsvErrorCode.IO_ERROR, "Ошибка записи файла: " + e.getMessage());
         }
     }
 
-    private int parseUrgency(String value) throws TicketCsvException {
-        try {
-            return Integer.parseInt(value.strip());
-        } catch (NumberFormatException error) {
-            throw new TicketCsvException(CsvErrorCode.BAD_NUMBER, "Срочность должна быть целым числом");
-        }
-    }
-
-    private LocalDateTime parseTakenAt(String value) throws TicketCsvException {
-        try {
-            return LocalDateTime.parse(value.strip());
-        } catch (DateTimeParseException error) {
-            throw new TicketCsvException(CsvErrorCode.BAD_DATE_TIME,
-                    "Время должно быть в ISO-формате, например 2026-10-12T09:30:00");
-        }
-    }
-
-    // ---------- запись ----------
-
-    private String formatTicket(Ticket ticket) {
+    private String formatLine(Ticket ticket) {
         String address = "";
-        if (ticket instanceof HomeVisitTicket home) {
-            address = home.getAddress();
-        } else if (ticket instanceof ClosedTicket closed && closed.getAddressOrNull() != null) {
-            address = closed.getAddressOrNull();
+        if (ticket instanceof HomeVisitTicket hvt) {
+            address = hvt.getAddress();
+        } else if (ticket instanceof ClosedTicket ct && ct.getAddressOrNull() != null) {
+            address = ct.getAddressOrNull();
         }
-        List<String> fields = List.of(
-                Long.toString(ticket.getId()),
-                ticket.getType().name(),
+
+        return "%d;%s;%s;%s;%s;%d;%s;%s".formatted(
+                ticket.getId(),
+                ticket.getType(),
                 ticket.getCardNumber(),
                 ticket.getFullName(),
                 ticket.getOffice(),
-                Integer.toString(ticket.getUrgency()),
-                ticket.getTakenAt().toString(),
-                address);
-        StringBuilder line = new StringBuilder();
-        for (int i = 0; i < fields.size(); i++) {
-            if (i > 0) {
-                line.append(DELIMITER);
-            }
-            line.append(escape(fields.get(i)));
-        }
-        return line.toString();
-    }
-
-    private String escape(String value) {
-        if (value.indexOf(DELIMITER) >= 0 || value.indexOf('"') >= 0) {
-            return '"' + value.replace("\"", "\"\"") + '"';
-        }
-        return value;
-    }
-
-    private void moveReplacing(Path source, Path target) throws IOException {
-        try {
-            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-        } catch (AtomicMoveNotSupportedException ignored) {
-            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
-        }
+                ticket.getUrgency(),
+                ticket.getTakenAt(),
+                address
+        );
     }
 }

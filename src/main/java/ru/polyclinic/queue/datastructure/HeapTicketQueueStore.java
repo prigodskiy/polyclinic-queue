@@ -1,6 +1,8 @@
 package ru.polyclinic.queue.datastructure;
 
 import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
 
 import ru.polyclinic.queue.model.Editable;
 import ru.polyclinic.queue.model.Ticket;
@@ -28,6 +30,11 @@ public final class HeapTicketQueueStore implements TicketQueueStore {
 
     private Ticket[] heap;
     private int size;
+
+    // ═══════════════════════════════════════════════════════════════
+    // НОВОЕ: Поле для отслеживания посещённых узлов при операциях
+    // ═══════════════════════════════════════════════════════════════
+    private Set<Integer> lastVisited = new HashSet<>();
 
     public HeapTicketQueueStore() {
         this(DEFAULT_CAPACITY);
@@ -227,6 +234,146 @@ public final class HeapTicketQueueStore implements TicketQueueStore {
         }
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // НОВОЕ: Методы для визуализации кучи
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * Получить индексы узлов, посещённых при последней операции (siftUp/siftDown).
+     * Используется для визуализации — пометки звёздочкой (*) в дампе.
+     *
+     * @return неизменяемое множество индексов
+     */
+    public synchronized Set<Integer> getLastVisited() {
+        return Set.copyOf(lastVisited);
+    }
+
+    /**
+     * ASCII-дамп кучи в виде дерева с линиями / и \\ между родителем и детьми.
+     * Посещённые узлы помечены символом *.
+     *
+     * <p>Пример вывода:
+     * <pre>
+     * ═══ Структура кучи (размер: 7) ═══
+     *                  [A1(0)*]
+     *                 /        \\
+     *          [B3(3)]          [A2(2)]
+     *          /     \\         /     \\
+     *    [C5(5)] [B4(4)]  [D3(3)] [C6(6)]
+     * ═══════════════════════════════════════════════
+     * </pre>
+     */
+    public synchronized String dump() {
+        if (size == 0) {
+            return "(куча пуста)";
+        }
+
+        // 1. Вычисляем максимальную длину метки узла
+        int maxLabel = 0;
+        for (int i = 0; i < size; i++) {
+            maxLabel = Math.max(maxLabel, formatLabel(i).length());
+        }
+        int nodeWidth = maxLabel + 2; // +2 для скобок []
+
+        // 2. Глубина дерева
+        int depth = 0;
+        for (int t = size; t > 0; t >>= 1) depth++;
+
+        // 3. Ширина холста: на нижнем уровне leafCount ячеек по cellWidth
+        int leafCount = 1 << (depth - 1);
+        int cellWidth = 2 * nodeWidth + 2; // зазор, чтобы линии не залезали на узлы
+        int totalWidth = leafCount * cellWidth;
+
+        // 4. Рисуем по уровням
+        StringBuilder sb = new StringBuilder();
+        sb.append("═══ Структура кучи (размер: ").append(size).append(") ═══\n");
+
+        for (int level = 0; level < depth; level++) {
+            int start = (1 << level) - 1;
+            int end = Math.min(start + (1 << level), size);
+
+            // --- Строка с узлами ---
+            char[] nodeLine = new char[totalWidth];
+            java.util.Arrays.fill(nodeLine, ' ');
+
+            for (int i = start; i < end; i++) {
+                int posInLevel = i - start;
+                int center = nodeCenter(level, posInLevel, totalWidth);
+                String node = "[" + formatLabel(i) + "]";
+                int nodeStart = center - node.length() / 2;
+                for (int c = 0; c < node.length(); c++) {
+                    int col = nodeStart + c;
+                    if (col >= 0 && col < totalWidth) {
+                        nodeLine[col] = node.charAt(c);
+                    }
+                }
+            }
+            sb.append(trimRight(nodeLine)).append('\n');
+
+            // --- Строка с линиями / и \\ ---
+            if (level < depth - 1 && start < size) {
+                char[] slashLine = new char[totalWidth];
+                java.util.Arrays.fill(slashLine, ' ');
+
+                for (int i = start; i < end; i++) {
+                    int posInLevel = i - start;
+                    int parentCenter = nodeCenter(level, posInLevel, totalWidth);
+
+                    int leftChild = 2 * i + 1;
+                    int rightChild = 2 * i + 2;
+
+                    // Линия / к левому ребёнку
+                    if (leftChild < size) {
+                        int childPos = posInLevel * 2;
+                        int childCenter = nodeCenter(level + 1, childPos, totalWidth);
+                        int slashPos = (parentCenter + childCenter) / 2;
+                        if (slashPos >= 0 && slashPos < totalWidth) {
+                            slashLine[slashPos] = '/';
+                        }
+                    }
+
+                    // Линия \\ к правому ребёнку
+                    if (rightChild < size) {
+                        int childPos = posInLevel * 2 + 1;
+                        int childCenter = nodeCenter(level + 1, childPos, totalWidth);
+                        int slashPos = (parentCenter + childCenter) / 2;
+                        if (slashPos >= 0 && slashPos < totalWidth) {
+                            slashLine[slashPos] = '\\';
+                        }
+                    }
+                }
+                sb.append(trimRight(slashLine)).append('\n');
+            }
+        }
+
+        sb.append("══════════════════════════════════════════════════");
+        return sb.toString();
+    }
+
+    /**
+     * Вычисляет позицию центра узла на холсте.
+     * Узлы равномерно распределены: на уровне L их 2^L,
+     * и каждый стоит по центру своей «ячейки».
+     */
+    private static int nodeCenter(int level, int posInLevel, int totalWidth) {
+        int nodesOnLevel = 1 << level;
+        return (2 * posInLevel + 1) * totalWidth / (2 * nodesOnLevel);
+    }
+
+    /** Формат метки узла: номер карты + срочность + пометка *. */
+    private String formatLabel(int index) {
+        String label = heap[index].getCardNumber() + "(" + heap[index].getUrgency() + ")";
+        if (lastVisited.contains(index)) label += "*";
+        return label;
+    }
+
+    /** Удаление trailing-пробелов из массива char. */
+    private static String trimRight(char[] chars) {
+        int end = chars.length;
+        while (end > 0 && chars[end - 1] == ' ') end--;
+        return new String(chars, 0, end);
+    }
+
     // ---------- внутренние ----------
 
     private void ensureCapacity() {
@@ -260,9 +407,15 @@ public final class HeapTicketQueueStore implements TicketQueueStore {
         }
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // ИЗМЕНЕНО: siftUp теперь отслеживает посещённые узлы
+    // ═══════════════════════════════════════════════════════════════
     private void siftUp(int i) {
+        lastVisited.clear(); // Очищаем перед новой операцией
         while (i > 0) {
             int p = parent(i);
+            lastVisited.add(i);   // Помечаем текущий узел
+            lastVisited.add(p);   // Помечаем родителя
             if (TicketOrder.INSTANCE.compare(heap[i], heap[p]) < 0) {
                 swap(i, p);
                 i = p;
@@ -272,13 +425,20 @@ public final class HeapTicketQueueStore implements TicketQueueStore {
         }
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // ИЗМЕНЕНО: siftDown теперь отслеживает посещённые узлы
+    // ═══════════════════════════════════════════════════════════════
     private void siftDown(int i) {
+        lastVisited.clear(); // Очищаем перед новой операцией
         while (leftChild(i) < size) {
             int smallest = leftChild(i);
             int right = rightChild(i);
+            lastVisited.add(i); // Помечаем текущий узел
             if (right < size && TicketOrder.INSTANCE.compare(heap[right], heap[smallest]) < 0) {
                 smallest = right;
+                lastVisited.add(right); // Помечаем правого ребёнка, если он меньше
             }
+            lastVisited.add(smallest); // Помечаем наименьшего ребёнка
             if (TicketOrder.INSTANCE.compare(heap[i], heap[smallest]) > 0) {
                 swap(i, smallest);
                 i = smallest;
