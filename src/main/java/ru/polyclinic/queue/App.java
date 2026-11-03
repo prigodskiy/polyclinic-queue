@@ -36,6 +36,8 @@ import ru.polyclinic.queue.model.Editable;
 import ru.polyclinic.queue.model.Ticket;
 import ru.polyclinic.queue.service.QueueService;
 import ru.polyclinic.queue.service.TicketGenerator;
+import ru.polyclinic.queue.service.Benchmark;
+import ru.polyclinic.queue.service.ConcurrencyDemo;
 import ru.polyclinic.queue.ui.TicketDialog;
 import ru.polyclinic.queue.ui.TicketTable;
 
@@ -57,6 +59,8 @@ public final class App extends Application {
 
     private TabPane tabs;
     private Button editButton;
+
+    public record AddResult(int added, int archived, int duplicates, boolean cancelled) {}
 
     @Override
     public void start(Stage stage) {
@@ -114,6 +118,62 @@ public final class App extends Application {
         appendCsv.setOnAction(e -> mergeFromFile());
         Button saveCsv = new Button("Сохранить CSV");
         saveCsv.setOnAction(e -> saveFile());
+        Button benchmarkBtn = new Button("Бенчмарк");
+        benchmarkBtn.setOnAction(e -> {
+            if (backgroundBusy) { showError("Занято", "Подождите"); return; }
+
+            backgroundBusy = true;
+            benchmarkBtn.setDisable(true);
+            System.out.println("[БЕНЧМАРК] Запуск... (может занять 15-30 секунд)");
+
+            Task<String> task = new Task<>() {
+                @Override
+                protected String call() {
+                    return Benchmark.run();
+                }
+            };
+
+            task.setOnSucceeded(evt -> {
+                System.out.println("[БЕНЧМАРК] Готово.");
+                backgroundBusy = false;
+                benchmarkBtn.setDisable(false);
+                Alert alert = new Alert(Alert.AlertType.INFORMATION, task.getValue());
+                alert.setTitle("Замеры производительности");
+                alert.setHeaderText("Сравнение структур данных");
+                alert.getDialogPane().setPrefWidth(700);
+                alert.showAndWait();
+            });
+
+            // ЭТОГО НЕ ХВАТАЛО — без него ошибки молчат
+            task.setOnFailed(evt -> {
+                System.out.println("[БЕНЧМАРК] ОШИБКА!");
+                Throwable ex = task.getException();
+                if (ex != null) ex.printStackTrace();
+                backgroundBusy = false;
+                benchmarkBtn.setDisable(false);
+                showError("Ошибка бенчмарка",
+                        ex != null ? ex.toString() : "Неизвестная ошибка");
+            });
+
+            new Thread(task).start();
+        });
+
+        Button raceBtn = new Button("Демо-гонки");
+        raceBtn.setOnAction(e -> {
+            System.out.println("[ГОНКИ] Запуск...");
+            try {
+                String result = ConcurrencyDemo.demonstrate();
+                System.out.println(result);
+                Alert alert = new Alert(Alert.AlertType.WARNING, result);
+                alert.setTitle("Многопоточность");
+                alert.setHeaderText("Демонстрация защиты данных");
+                alert.getDialogPane().setPrefWidth(500);
+                alert.showAndWait();
+            } catch (Exception ex) {
+                ex.printStackTrace();
+                showError("Ошибка демо-гонок", ex.toString());
+            }
+        });
 
         progressBar = new ProgressBar(0);
         progressBar.setPrefWidth(150);
@@ -130,7 +190,7 @@ public final class App extends Application {
 
         HBox box = new HBox(8, accept, add, generate, spacer1,
                 editButton, remove, spacer2,
-                progressBar, cancelButton, loadCsv, appendCsv, saveCsv, statusLabel);
+                progressBar, cancelButton, benchmarkBtn, raceBtn, loadCsv, appendCsv, saveCsv, statusLabel);
         box.setPadding(new Insets(10));
         box.setAlignment(Pos.CENTER);
         return box;
@@ -421,34 +481,25 @@ public final class App extends Application {
 
     private void addAllTicketsInBackground(Ticket[] tickets, int totalCount) {
         if (cancelled) {
-            System.out.println("[ОТМЕНА] Отменено перед добавлением - талоны НЕ добавлены");
             cleanup();
             return;
         }
 
-        addPhase = true; // Включаем фазу добавления
+        addPhase = true;
 
-        Task<int[]> addTask = new Task<int[]>() {
+        Task<AddResult> addTask = new Task<>() {
             @Override
-            protected int[] call() {
+            protected AddResult call() {
                 List<Ticket> addedQueue = new ArrayList<>();
                 List<ClosedTicket> addedArchive = new ArrayList<>();
+                int duplicates = 0;
 
                 for (int i = 0; i < tickets.length; i++) {
-                    // Проверяем отмену на КАЖДОЙ итерации
                     if (cancelled) {
-                        System.out.println("[ОТМЕНА] Откат " + (addedQueue.size() + addedArchive.size()) + " талонов");
-
-                        // Откатываем добавленные талоны
-                        for (Ticket t : addedQueue) {
-                            service.removeByCardNumber(t.getCardNumber());
-                        }
-                        for (ClosedTicket c : addedArchive) {
-                            service.removeFromArchive(c.getId());
-                        }
-
-                        // Возвращаем: 0 добавлено, 0 в архив, флаг отмены (-1)
-                        return new int[]{0, 0, -1};
+                        // ОТКАТ
+                        for (Ticket t : addedQueue) service.removeByCardNumber(t.getCardNumber());
+                        for (ClosedTicket c : addedArchive) service.removeFromArchive(c.getId());
+                        return new AddResult(0, 0, 0, true);
                     }
 
                     Ticket t = tickets[i];
@@ -458,16 +509,17 @@ public final class App extends Application {
                     } else {
                         try {
                             service.add(t);
-                            addedQueue.add(t); // Запоминаем для возможного отката
-                        } catch (DuplicateTicketException ignored) { }
+                            addedQueue.add(t);
+                        } catch (DuplicateTicketException e) {
+                            duplicates++; // Больше не проглатываем молча!
+                        }
                     }
 
                     if (i % 500 == 0 || i == tickets.length - 1) {
                         updateProgress(i + 1, tickets.length);
                     }
                 }
-
-                return new int[]{addedQueue.size(), addedArchive.size(), 0};
+                return new AddResult(addedQueue.size(), addedArchive.size(), duplicates, false);
             }
         };
 
@@ -477,21 +529,17 @@ public final class App extends Application {
 
         addTask.setOnSucceeded(e -> {
             addPhase = false;
-            int[] result = addTask.getValue();
-            int added = result[0];
-            int archived = result[1];
-            boolean wasCancelled = result[2] == -1;
-
+            AddResult result = addTask.getValue();
             service.printStructure();
+
             Platform.runLater(() -> {
                 refresh();
-                if (wasCancelled) {
+                if (result.cancelled()) {
                     new Alert(Alert.AlertType.INFORMATION, "Добавление отменено. Очередь не изменена.").showAndWait();
                 } else {
-                    String msg = "Добавлено: " + added + " из " + totalCount;
-                    if (archived > 0) {
-                        msg += " (+" + archived + " в архив)";
-                    }
+                    String msg = "Добавлено: " + result.added() + " из " + totalCount;
+                    if (result.archived() > 0) msg += " (+" + result.archived() + " в архив)";
+                    if (result.duplicates() > 0) msg += ". Пропущено дубликатов: " + result.duplicates();
                     new Alert(Alert.AlertType.INFORMATION, msg).showAndWait();
                 }
                 cleanup();
@@ -501,14 +549,10 @@ public final class App extends Application {
         addTask.setOnFailed(e -> {
             addPhase = false;
             Platform.runLater(() -> {
-                Throwable ex = addTask.getException();
-                showError("Ошибка добавления", ex != null ? ex.getMessage() : "Неизвестная ошибка");
+                showError("Ошибка добавления", addTask.getException() != null ? addTask.getException().getMessage() : "Ошибка");
                 cleanup();
             });
         });
-
-        // setOnCancelled() здесь не используется, так как мы НЕ отменяем поток
-        // через Task.cancel() на этой фазе (чтобы дать ему время на откат).
 
         currentThread = new Thread(addTask);
         currentThread.setDaemon(true);
