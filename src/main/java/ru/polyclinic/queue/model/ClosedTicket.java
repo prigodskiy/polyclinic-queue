@@ -15,12 +15,20 @@ import java.time.LocalDateTime;
  * <p>Адрес — nullable-поле: заполняется, если закрыт был талон на дому,
  * поэтому адрес не теряется и четвёртый класс ClosedHomeVisitTicket не нужен.
  */
-public final class ClosedTicket extends Ticket {
+public final class ClosedTicket extends Ticket implements java.io.Serializable {
+    private static final long serialVersionUID = 1L; // Обязательно для сериализации {
 
     private final String address; // nullable: есть только у закрытых домашних
 
-    public ClosedTicket(long id, String cardNumber, String fullName, String office,
-                        int urgency, LocalDateTime takenAt, String address) {
+    @com.fasterxml.jackson.annotation.JsonCreator
+    public ClosedTicket(
+            @com.fasterxml.jackson.annotation.JsonProperty("id") long id,
+            @com.fasterxml.jackson.annotation.JsonProperty("cardNumber") String cardNumber,
+            @com.fasterxml.jackson.annotation.JsonProperty("fullName") String fullName,
+            @com.fasterxml.jackson.annotation.JsonProperty("office") String office,
+            @com.fasterxml.jackson.annotation.JsonProperty("urgency") int urgency,
+            @com.fasterxml.jackson.annotation.JsonProperty("takenAt") LocalDateTime takenAt,
+            @com.fasterxml.jackson.annotation.JsonProperty("address") String address) {
         super(id, cardNumber, fullName, office, urgency, takenAt);
         this.address = (address == null || address.isBlank()) ? null : address.strip();
     }

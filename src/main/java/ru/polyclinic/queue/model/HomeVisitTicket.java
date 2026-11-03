@@ -6,7 +6,8 @@ import java.util.List;
 import java.util.Objects;
 
 /** Талон на дому: редактируемый талон с дополнительным полем «адрес». */
-public final class HomeVisitTicket extends Ticket implements Editable {
+public final class HomeVisitTicket extends Ticket implements Editable, java.io.Serializable {
+    private static final long serialVersionUID = 1L; // Обязательно для сериализации
 
     private final String address;
 
@@ -17,8 +18,15 @@ public final class HomeVisitTicket extends Ticket implements Editable {
     }
 
     /** Заводской конструктор для десериализации и копий. */
-    public HomeVisitTicket(long id, String cardNumber, String fullName, String office,
-                           int urgency, LocalDateTime takenAt, String address) {
+    @com.fasterxml.jackson.annotation.JsonCreator
+    public HomeVisitTicket(
+            @com.fasterxml.jackson.annotation.JsonProperty("id") long id,
+            @com.fasterxml.jackson.annotation.JsonProperty("cardNumber") String cardNumber,
+            @com.fasterxml.jackson.annotation.JsonProperty("fullName") String fullName,
+            @com.fasterxml.jackson.annotation.JsonProperty("office") String office,
+            @com.fasterxml.jackson.annotation.JsonProperty("urgency") int urgency,
+            @com.fasterxml.jackson.annotation.JsonProperty("takenAt") LocalDateTime takenAt,
+            @com.fasterxml.jackson.annotation.JsonProperty("address") String address) {
         super(id, cardNumber, fullName, office, urgency, takenAt);
         this.address = requireAddress(address);
     }

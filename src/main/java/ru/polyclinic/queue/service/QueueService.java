@@ -16,7 +16,9 @@ public final class QueueService {
 
     private final TicketQueueStore<Ticket> queue = new HeapTicketQueueStore<>();
     private final List<ClosedTicket> archive = new ArrayList<>();
+
     private final Set<String> knownCards = new HashSet<>();
+    private final Set<Long> archivedIds = new HashSet<>();
 
     public synchronized void add(Ticket ticket) {
         if (ticket instanceof ClosedTicket) {
@@ -69,16 +71,33 @@ public final class QueueService {
 
     public synchronized Ticket findByCardNumber(String cardNumber) { return queue.findByCardNumber(cardNumber); }
 
-    public synchronized void addToArchive(ClosedTicket ticket) { archive.add(ticket); }
+    public synchronized void addToArchive(ClosedTicket ticket) {
+        // Добавляем только если такого ID еще нет
+        if (archivedIds.add(ticket.getId())) {
+            archive.add(ticket);
+        }
+    }
+
     public synchronized List<ClosedTicket> getArchive() { return List.copyOf(archive); }
-    public synchronized boolean removeFromArchive(long ticketId) { return archive.removeIf(t -> t.getId() == ticketId); }
+
+    public synchronized boolean removeFromArchive(long ticketId) {
+        boolean removed = archive.removeIf(t -> t.getId() == ticketId);
+        if (removed) {
+            archivedIds.remove(ticketId);
+        }
+        return removed;
+    }
+
     public synchronized int archiveSize() { return archive.size(); }
     public synchronized Ticket[] closedSnapshot() { return archive.toArray(Ticket[]::new); }
 
     public synchronized void loadAll(List<Ticket> tickets) {
         for (Ticket ticket : tickets) {
             if (ticket instanceof ClosedTicket closed) {
-                archive.add(closed);
+                // Проверяем на дубликат перед добавлением
+                if (archivedIds.add(closed.getId())) {
+                    archive.add(closed);
+                }
             } else {
                 if (knownCards.add(ticket.getCardNumber())) {
                     queue.add(ticket);
@@ -98,6 +117,7 @@ public final class QueueService {
         if (queue instanceof HeapTicketQueueStore<?> heap) heap.clear();
         archive.clear();
         knownCards.clear();
+        archivedIds.clear(); // Очищаем и это
     }
 
     public synchronized void printStructure() {

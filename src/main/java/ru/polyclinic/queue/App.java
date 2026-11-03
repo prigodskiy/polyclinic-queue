@@ -1,7 +1,6 @@
 package ru.polyclinic.queue;
 
 import java.io.File;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -29,8 +28,10 @@ import javafx.stage.Stage;
 import ru.polyclinic.queue.datastructure.DuplicateTicketException;
 import ru.polyclinic.queue.io.CsvLoadResult;
 import ru.polyclinic.queue.io.CsvRowError;
-import ru.polyclinic.queue.io.TicketCsvException;
-import ru.polyclinic.queue.io.TicketCsvService;
+import ru.polyclinic.queue.io.DataSerializer;
+import ru.polyclinic.queue.io.CsvDataSerializer;
+import ru.polyclinic.queue.io.JsonDataSerializer;
+import ru.polyclinic.queue.io.BinaryDataSerializer;
 import ru.polyclinic.queue.model.ClosedTicket;
 import ru.polyclinic.queue.model.Editable;
 import ru.polyclinic.queue.model.Ticket;
@@ -44,7 +45,12 @@ import ru.polyclinic.queue.ui.TicketTable;
 public final class App extends Application {
 
     private final QueueService service = new QueueService();
-    private final TicketCsvService csv = new TicketCsvService();
+    private final DataSerializer[] serializers = {
+            new CsvDataSerializer(),
+            new JsonDataSerializer(),
+            new BinaryDataSerializer()
+    };
+    private javafx.scene.control.ComboBox<DataSerializer> formatCombo;
     private final TicketTable table = new TicketTable();
     private final TicketTable archiveTable = new TicketTable(true);
     private final Label statusLabel = new Label("Очередь: 0 · Архив: 0");
@@ -83,14 +89,20 @@ public final class App extends Application {
     private TabPane tabs() {
         Tab queueTab = new Tab("Очередь", table);
         queueTab.setClosable(false);
-        Tab archiveTab = new Tab("Закрытые талоны", archiveTable);
+
+        Tab archiveTab = new Tab("Архив", archiveTable);
         archiveTab.setClosable(false);
+
         tabs = new TabPane(queueTab, archiveTab);
         tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         return tabs;
     }
 
     private HBox footer() {
+        formatCombo = new javafx.scene.control.ComboBox<>();
+        formatCombo.getItems().addAll(serializers);
+        formatCombo.getSelectionModel().selectFirst();
+
         Button accept = new Button("Принять пациента");
         accept.setOnAction(e -> acceptNext());
         Button add = new Button("Создать талон");
@@ -112,11 +124,11 @@ public final class App extends Application {
                 (obs, oldVal, newVal) -> updateEditState.run());
         updateEditButtonState();
 
-        Button loadCsv = new Button("Загрузить CSV");
+        Button loadCsv = new Button("Загрузить файл");
         loadCsv.setOnAction(e -> openFileDialog());
-        Button appendCsv = new Button("Добавить CSV");
+        Button appendCsv = new Button("Добавить файл");
         appendCsv.setOnAction(e -> mergeFromFile());
-        Button saveCsv = new Button("Сохранить CSV");
+        Button saveCsv = new Button("Сохранить файл");
         saveCsv.setOnAction(e -> saveFile());
         Button benchmarkBtn = new Button("Бенчмарк");
         benchmarkBtn.setOnAction(e -> {
@@ -190,7 +202,8 @@ public final class App extends Application {
 
         HBox box = new HBox(8, accept, add, generate, spacer1,
                 editButton, remove, spacer2,
-                progressBar, cancelButton, benchmarkBtn, raceBtn, loadCsv, appendCsv, saveCsv, statusLabel);
+                loadCsv, appendCsv, saveCsv, formatCombo,
+                progressBar, cancelButton, benchmarkBtn, raceBtn, statusLabel);
         box.setPadding(new Insets(10));
         box.setAlignment(Pos.CENTER);
         return box;
@@ -375,11 +388,17 @@ public final class App extends Application {
             return;
         }
 
-        File file = chooseFile("Выберите CSV-файл с талонами");
+        DataSerializer serializer = formatCombo.getValue();
+        FileChooser chooser = new FileChooser();
+        chooser.setTitle("Выберите файл (" + serializer.getFormatName() + ")");
+        String ext = "*." + serializer.getFormatName().toLowerCase();
+        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(serializer.getFormatName(), ext));
+
+        File file = chooser.showOpenDialog(table.getScene().getWindow());
         if (file == null) return;
 
         if (!service.isQueueEmpty()) {
-            Optional<ButtonType> answer = confirm(Alert.AlertType.CONFIRMATION, "Загрузка из CSV",
+            Optional<ButtonType> answer = confirm(Alert.AlertType.CONFIRMATION, "Загрузка из файла",
                     "Текущая очередь будет заменена содержимым файла. Продолжить?",
                     ButtonType.YES, ButtonType.NO);
             if (answer.isEmpty() || answer.get() != ButtonType.YES) return;
@@ -394,7 +413,13 @@ public final class App extends Application {
             return;
         }
 
-        File file = chooseFile("Выберите CSV-файл с талонами для добавления");
+        DataSerializer serializer = formatCombo.getValue();
+        FileChooser chooser = new FileChooser();
+        chooser.setTitle("Выберите файл для добавления (" + serializer.getFormatName() + ")");
+        String ext = "*." + serializer.getFormatName().toLowerCase();
+        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(serializer.getFormatName(), ext));
+
+        File file = chooser.showOpenDialog(table.getScene().getWindow());
         if (file == null) return;
 
         loadInBackground(file, false);
@@ -409,12 +434,15 @@ public final class App extends Application {
         progressBar.setProgress(0);
         cancelButton.setVisible(true);
 
+        DataSerializer serializer = formatCombo.getValue();
+
         Task<CsvLoadResult> task = new Task<CsvLoadResult>() {
             @Override
             protected CsvLoadResult call() throws Exception {
-                return csv.load(file.toPath(), (current, total) -> {
-                    updateProgress(current, total);
-                });
+                // Вызываем абстрактный метод load
+                List<Ticket> loadedTickets = serializer.load(file);
+                // Оборачиваем в CsvLoadResult (ошибок нет, так как JSON/Binary падают целиком при ошибке)
+                return new CsvLoadResult(loadedTickets, List.of());
             }
         };
 
@@ -607,15 +635,19 @@ public final class App extends Application {
     }
 
     private void saveFile() {
+        DataSerializer serializer = formatCombo.getValue();
         FileChooser chooser = new FileChooser();
-        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("CSV", "*.csv"));
-        chooser.setInitialFileName("tickets.csv");
+        String ext = "*." + serializer.getFormatName().toLowerCase();
+        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(serializer.getFormatName(), ext));
+        chooser.setInitialFileName("tickets." + serializer.getFormatName().toLowerCase());
+
         javafx.stage.Window window = table.getScene() != null ? table.getScene().getWindow() : null;
         File file = chooser.showSaveDialog(window);
         if (file == null) return;
+
         try {
-            csv.save(Path.of(file.toURI()), service.exportAll());
-        } catch (TicketCsvException error) {
+            serializer.save(file, service.exportAll());
+        } catch (Exception error) {
             showError("Сохранение не удалось", error.getMessage());
         }
     }
@@ -693,10 +725,16 @@ public final class App extends Application {
 
     private void loadFromSilently(File file) {
         try {
-            service.loadAll(csv.load(file.toPath()).tickets());
+            // Используем CSV-сериализатор для демо-файла
+            DataSerializer serializer = new ru.polyclinic.queue.io.CsvDataSerializer();
+            List<Ticket> loadedTickets = serializer.load(file);
+
+            service.loadAll(loadedTickets);
             service.printStructure();
-        } catch (TicketCsvException | DuplicateTicketException error) {
-            // стартуем с пустой очередью
+        } catch (Exception error) {
+            // Ловим общее исключение, так как интерфейс DataSerializer бросает Exception.
+            // Стартуем с пустой очередью, если демо-файл битый или отсутствует.
+            System.err.println("Не удалось загрузить демо-файл: " + error.getMessage());
         }
     }
 

@@ -3,6 +3,10 @@ package ru.polyclinic.queue.model;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonSubTypes;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
 
 /**
  * Базовый талон электронной очереди.
@@ -15,7 +19,16 @@ import java.util.Objects;
  * создание копии через {@link #withChanges}, что защищает кучу от порчи
  * приоритета «из-под себя».
  */
-public class Ticket implements Editable {
+
+@com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+@JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.EXISTING_PROPERTY, property = "type")
+@JsonSubTypes({
+        @JsonSubTypes.Type(value = Ticket.class, name = "REGULAR"),
+        @JsonSubTypes.Type(value = ClosedTicket.class, name = "CLOSED"),
+        @JsonSubTypes.Type(value = HomeVisitTicket.class, name = "HOME_VISIT")
+})
+public class Ticket implements Editable, java.io.Serializable {
+    private static final long serialVersionUID = 1L; // Обязательно для сериализации
 
     private static final java.util.concurrent.atomic.AtomicLong ID_SEQUENCE =
             new java.util.concurrent.atomic.AtomicLong(1);
@@ -34,8 +47,14 @@ public class Ticket implements Editable {
     }
 
     /** Публичный заводской конструктор: для демо-данных, десериализации и тестов. */
-    public Ticket(long id, String cardNumber, String fullName, String office,
-                  int urgency, LocalDateTime takenAt) {
+    @JsonCreator
+    public Ticket(
+            @JsonProperty("id") long id,
+            @JsonProperty("cardNumber") String cardNumber,
+            @JsonProperty("fullName") String fullName,
+            @JsonProperty("office") String office,
+            @JsonProperty("urgency") int urgency,
+            @JsonProperty("takenAt") LocalDateTime takenAt) {
         if (urgency < 0 || urgency > 3) {
             throw new IllegalArgumentException("Urgency must be in range [0, 3]");
         }

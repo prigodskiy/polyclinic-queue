@@ -112,7 +112,7 @@ public class TicketCsvService {
             LocalDateTime takenAt = LocalDateTime.parse(parts[6].strip());
             String address = parts.length > 7 ? parts[7].strip() : null;
 
-            TicketType type = TicketType.valueOf(typeStr);
+            TicketType type = TicketType.fromString(typeStr);
 
             return switch (type) {
                 case REGULAR -> new Ticket(id, cardNumber, patientName, office, urgency, takenAt);
