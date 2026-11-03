@@ -291,7 +291,7 @@ public final class App extends Application {
         javafx.scene.control.TextInputDialog dialog = new javafx.scene.control.TextInputDialog("10");
         dialog.setTitle("Генерация талонов");
         dialog.setHeaderText("Сколько талонов сгенерировать?");
-        dialog.setContentText("Количество (1 — 100 000):");
+        dialog.setContentText("Количество (1 - 100 000):");
 
         dialog.showAndWait().ifPresent(input -> {
             try {

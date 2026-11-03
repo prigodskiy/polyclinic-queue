@@ -2,75 +2,118 @@ package ru.polyclinic.queue.io;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
 import ru.polyclinic.queue.model.ClosedTicket;
 import ru.polyclinic.queue.model.HomeVisitTicket;
 import ru.polyclinic.queue.model.Ticket;
 
+import java.io.DataOutputStream;
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-public class SerializerTest {
+class SerializerTest {
 
     @TempDir
     Path tempDir;
 
-    // Вспомогательный метод для создания тестовых данных
     private List<Ticket> createTestData() {
         LocalDateTime time = LocalDateTime.of(2026, 10, 23, 10, 0);
         return List.of(
-                new Ticket(1L, "100", "Иван", "101", 2, time),
-                new HomeVisitTicket(2L, "200", "Петр", "102", 3, time, "ул. Ленина, д. 1"),
-                new ClosedTicket(3L, "300", "Анна", "103", 0, time, null)
+                new Ticket(1L, "100", "Иван Иванович", "101", 2, time),
+                new HomeVisitTicket(2L, "200", "Пётр Петрович", "102", 3, time, "ул. Ленина, д. 1"),
+                new ClosedTicket(3L, "300", "Анна Сергеевна", "103", 0, time, null)
         );
     }
 
-    // Универсальный метод для проверки любого сериализатора
     private void testSerializer(DataSerializer serializer, String filename) throws Exception {
         File file = tempDir.resolve(filename).toFile();
-        List<Ticket> originalData = createTestData();
+        List<Ticket> original = createTestData();
 
-        // 1. Сохраняем
-        serializer.save(file, originalData);
-        assertTrue(file.exists(), "Файл должен быть создан");
+        serializer.save(file, original);
+        assertTrue(file.exists(), "файл должен быть создан");
 
-        // 2. Загружаем
-        List<Ticket> loadedData = serializer.load(file);
+        List<Ticket> loaded = serializer.load(file);
+        assertEquals(3, loaded.size());
 
-        // 3. Проверяем
-        assertEquals(3, loadedData.size(), "Должно загрузиться 3 талона");
+        assertInstanceOf(Ticket.class, loaded.get(0));
+        assertEquals("Иван Иванович", loaded.get(0).getFullName());
+        assertEquals("100", loaded.get(0).getCardNumber());
 
-        // Проверка обычного талона
-        assertInstanceOf(Ticket.class, loadedData.get(0));
-        assertEquals("Иван", loadedData.get(0).getFullName());
-        assertEquals("100", loadedData.get(0).getCardNumber());
+        assertInstanceOf(HomeVisitTicket.class, loaded.get(1));
+        assertEquals("ул. Ленина, д. 1", ((HomeVisitTicket) loaded.get(1)).getAddress());
 
-        // Проверка полиморфизма (Домашний вызов)
-        assertInstanceOf(HomeVisitTicket.class, loadedData.get(1));
-        HomeVisitTicket hv = (HomeVisitTicket) loadedData.get(1);
-        assertEquals("ул. Ленина, д. 1", hv.getAddress());
+        assertInstanceOf(ClosedTicket.class, loaded.get(2));
+        assertNull(((ClosedTicket) loaded.get(2)).getAddressOrNull());
+    }
 
-        // Проверка полиморфизма (Закрытый талон)
-        assertInstanceOf(ClosedTicket.class, loadedData.get(2));
-        ClosedTicket ct = (ClosedTicket) loadedData.get(2);
-        assertNull(ct.getAddressOrNull());
+    // ── happy path для каждого формата ───────────────────────────
+
+    @Test void testJsonSerialization()   throws Exception { testSerializer(new JsonDataSerializer(),   "test.json"); }
+    @Test void testBinarySerialization() throws Exception { testSerializer(new BinaryDataSerializer(), "test.bin");  }
+    @Test void testCsvSerialization()    throws Exception { testSerializer(new CsvDataSerializer(),    "test.csv");  }
+
+    // ── граничные случаи ────────────────────────────────────────
+
+    @Test
+    void saveEmptyListRoundtripJson() throws Exception {
+        File f = tempDir.resolve("empty.json").toFile();
+        JsonDataSerializer s = new JsonDataSerializer();
+        s.save(f, List.of());
+        assertTrue(s.load(f).isEmpty());
     }
 
     @Test
-    void testJsonSerialization() throws Exception {
-        testSerializer(new JsonDataSerializer(), "test.json");
+    void saveEmptyListRoundtripBinary() throws Exception {
+        File f = tempDir.resolve("empty.bin").toFile();
+        BinaryDataSerializer s = new BinaryDataSerializer();
+        s.save(f, List.of());
+        assertTrue(s.load(f).isEmpty());
+    }
+
+    // ── бинарный формат: магия и версия ─────────────────────────
+
+    @Test
+    void loadWrongMagicThrows() throws Exception {
+        File f = tempDir.resolve("bad-magic.bin").toFile();
+        try (DataOutputStream out = new DataOutputStream(new FileOutputStream(f))) {
+            out.writeInt(0xDEADBEEF); // не наша магия
+            out.writeInt(1);
+        }
+        assertThrows(IOException.class, () -> new BinaryDataSerializer().load(f));
     }
 
     @Test
-    void testBinarySerialization() throws Exception {
-        testSerializer(new BinaryDataSerializer(), "test.bin");
+    void loadFutureVersionThrows() throws Exception {
+        File f = tempDir.resolve("future-version.bin").toFile();
+        try (DataOutputStream out = new DataOutputStream(new FileOutputStream(f))) {
+            out.writeInt(0x504F4C59); // правильная магия "POLY"
+            out.writeInt(999);        // будущая версия
+        }
+        assertThrows(IOException.class, () -> new BinaryDataSerializer().load(f));
     }
 
+    // ── CSV: экранирование разделителя ──────────────────────────
+    // (если ты уже применил фикс из 1.2 — этот тест проходит;
+    //  если нет — покажет, что фикс нужен)
+
     @Test
-    void testCsvSerialization() throws Exception {
-        testSerializer(new CsvDataSerializer(), "test.csv");
+    void csvHandlesSemicolonInAddress() throws Exception {
+        File f = tempDir.resolve("semicolon.csv").toFile();
+        LocalDateTime time = LocalDateTime.of(2026, 10, 23, 10, 0);
+        HomeVisitTicket tricky = new HomeVisitTicket(
+                1L, "100", "Иван Иванович", "101", 2, time,
+                "ул. Ленина; д. 1; кв. 5");
+        CsvDataSerializer s = new CsvDataSerializer();
+        s.save(f, List.of(tricky));
+        List<Ticket> loaded = s.load(f);
+        assertEquals(1, loaded.size());
+        assertEquals("ул. Ленина; д. 1; кв. 5",
+                ((HomeVisitTicket) loaded.get(0)).getAddress());
     }
 }

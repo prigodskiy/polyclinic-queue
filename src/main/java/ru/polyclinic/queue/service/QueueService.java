@@ -33,19 +33,24 @@ public final class QueueService {
     public synchronized Ticket acceptNext() {
         Ticket next = queue.poll();
         if (next != null) {
-            knownCards.remove(next.getCardNumber()); // Удаляем из множества
+            knownCards.remove(next.getCardNumber());
         }
         return next;
     }
 
     public synchronized void updateTicket(Ticket updated) {
-        if (!(updated instanceof Editable)) throw new IllegalArgumentException("Закрытый талон нельзя редактировать");
-        // Номер карты не меняется, поэтому knownCards трогать не нужно
+        if (!(updated instanceof Editable)) {
+            throw new IllegalArgumentException("Закрытый талон нельзя редактировать");
+        }
+        // Номер карты не меняется (в GUI поле заблокировано),
+        // поэтому knownCards не трогаем.
         queue.removeByCardNumber(updated.getCardNumber());
         queue.add(updated);
     }
 
-    public synchronized Ticket peekNext() { return queue.isEmpty() ? null : queue.peek(); }
+    public synchronized Ticket peekNext() {
+        return queue.isEmpty() ? null : queue.peek();
+    }
 
     public synchronized boolean removeByCardNumber(String cardNumber) {
         boolean removed = queue.removeByCardNumber(cardNumber);
@@ -53,14 +58,40 @@ public final class QueueService {
         return removed;
     }
 
-    public synchronized boolean changePriority(String cardNumber, int newUrgency) { return queue.changePriority(cardNumber, newUrgency); }
+    public synchronized boolean changePriority(String cardNumber, int newUrgency) {
+        return queue.changePriority(cardNumber, newUrgency);
+    }
+
     public synchronized Ticket[] topK(int k) { return queue.topK(k); }
-    public synchronized int queueSize() { return queue.size(); }
+    public synchronized int queueSize()      { return queue.size(); }
     public synchronized boolean isQueueEmpty() { return queue.isEmpty(); }
 
+    /**
+     * Слияние. ВАЖНО: knownCards и archivedIds — кэши поверх очереди и архива.
+     * Их нельзя оставлять в рассогласованном состоянии, иначе проверка
+     * дубликатов сломается. Поэтому сначала снимаем snapshot ДО слияния
+     * (queue.merge очищает other), потом сливаем, потом синхронизируем кэши.
+     */
     public synchronized void merge(QueueService other) {
+        if (other == null || other == this) return;
+
+        // 1. Снимок очереди other ДО слияния: queue.merge его очистит.
+        Ticket[] incomingQueue = other.queue.snapshot();
+
+        // 2. Слияние структур.
         queue.merge(other.queue);
-        archive.addAll(other.archive);
+
+        // 3. Синхронизируем knownCards — теперь эти карты у нас в очереди.
+        for (Ticket t : incomingQueue) {
+            knownCards.add(t.getCardNumber());
+        }
+
+        // 4. Переносим архив с дедупликацией по id.
+        for (ClosedTicket c : other.getArchive()) {
+            if (archivedIds.add(c.getId())) {
+                archive.add(c);
+            }
+        }
         other.archive.clear();
     }
 
@@ -69,10 +100,11 @@ public final class QueueService {
         return size == 0 ? new Ticket[0] : queue.topK(size);
     }
 
-    public synchronized Ticket findByCardNumber(String cardNumber) { return queue.findByCardNumber(cardNumber); }
+    public synchronized Ticket findByCardNumber(String cardNumber) {
+        return queue.findByCardNumber(cardNumber);
+    }
 
     public synchronized void addToArchive(ClosedTicket ticket) {
-        // Добавляем только если такого ID еще нет
         if (archivedIds.add(ticket.getId())) {
             archive.add(ticket);
         }
@@ -94,14 +126,11 @@ public final class QueueService {
     public synchronized void loadAll(List<Ticket> tickets) {
         for (Ticket ticket : tickets) {
             if (ticket instanceof ClosedTicket closed) {
-                // Проверяем на дубликат перед добавлением
                 if (archivedIds.add(closed.getId())) {
                     archive.add(closed);
                 }
-            } else {
-                if (knownCards.add(ticket.getCardNumber())) {
-                    queue.add(ticket);
-                }
+            } else if (knownCards.add(ticket.getCardNumber())) {
+                queue.add(ticket);
             }
         }
     }
@@ -117,7 +146,7 @@ public final class QueueService {
         if (queue instanceof HeapTicketQueueStore<?> heap) heap.clear();
         archive.clear();
         knownCards.clear();
-        archivedIds.clear(); // Очищаем и это
+        archivedIds.clear();
     }
 
     public synchronized void printStructure() {

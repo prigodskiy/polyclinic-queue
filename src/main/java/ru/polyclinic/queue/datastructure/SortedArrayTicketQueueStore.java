@@ -9,19 +9,22 @@ import ru.polyclinic.queue.model.TicketOrder;
 public final class SortedArrayTicketQueueStore<T extends Ticket> implements TicketQueueStore<T> {
 
     private static final int DEFAULT_CAPACITY = 16;
-    private T[] items;
+    private Object[] items;
     private int size;
 
-    @SuppressWarnings("unchecked")
     public SortedArrayTicketQueueStore() {
         this(DEFAULT_CAPACITY);
     }
 
-    @SuppressWarnings("unchecked")
     public SortedArrayTicketQueueStore(int capacity) {
         if (capacity <= 0) throw new IllegalArgumentException("Capacity must be positive");
-        items = (T[]) new Ticket[capacity];
+        items = new Object[capacity];
         size = 0;
+    }
+
+    @SuppressWarnings("unchecked")
+    private T elementAt(int i) {
+        return (T) items[i];
     }
 
     @Override
@@ -40,7 +43,7 @@ public final class SortedArrayTicketQueueStore<T extends Ticket> implements Tick
     @Override
     public synchronized T peek() {
         if (size == 0) throw new IllegalStateException("Queue is empty");
-        return items[0];
+        return elementAt(0);
     }
 
     @Override
@@ -54,7 +57,7 @@ public final class SortedArrayTicketQueueStore<T extends Ticket> implements Tick
     @Override
     public synchronized T findByCardNumber(String cardNumber) {
         int index = indexOfCardNumber(cardNumber);
-        return index >= 0 ? items[index] : null;
+        return index >= 0 ? elementAt(index) : null;
     }
 
     @Override
@@ -72,7 +75,8 @@ public final class SortedArrayTicketQueueStore<T extends Ticket> implements Tick
         int index = indexOfCardNumber(cardNumber);
         if (index < 0) return false;
 
-        T updated = (T) items[index].withUrgency(newUrgency);
+        @SuppressWarnings("unchecked")
+        T updated = (T) elementAt(index).withUrgency(newUrgency);
         System.arraycopy(items, index + 1, items, index, size - index - 1);
         items[--size] = null;
         add(updated);
@@ -80,11 +84,10 @@ public final class SortedArrayTicketQueueStore<T extends Ticket> implements Tick
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public synchronized T[] topK(int k) {
         if (k < 0) throw new IllegalArgumentException("K must not be negative");
-        @SuppressWarnings("unchecked")
-        T[] copy = (T[]) Arrays.copyOfRange(items, 0, Math.min(k, size), Ticket[].class);
-        return copy;
+        return (T[]) Arrays.copyOfRange(items, 0, Math.min(k, size), Ticket[].class);
     }
 
     @Override
@@ -100,10 +103,9 @@ public final class SortedArrayTicketQueueStore<T extends Ticket> implements Tick
     @Override public synchronized boolean isEmpty() { return size == 0; }
 
     @Override
+    @SuppressWarnings("unchecked")
     public synchronized T[] snapshot() {
-        @SuppressWarnings("unchecked")
-        T[] copy = (T[]) Arrays.copyOf(items, size, Ticket[].class);
-        return copy;
+        return (T[]) Arrays.copyOf(items, size, Ticket[].class);
     }
 
     public synchronized void clear() {
@@ -113,7 +115,7 @@ public final class SortedArrayTicketQueueStore<T extends Ticket> implements Tick
 
     private int indexOfCardNumber(String cardNumber) {
         for (int i = 0; i < size; i++) {
-            if (items[i].getCardNumber().equals(cardNumber)) return i;
+            if (elementAt(i).getCardNumber().equals(cardNumber)) return i;
         }
         return -1;
     }
@@ -122,7 +124,7 @@ public final class SortedArrayTicketQueueStore<T extends Ticket> implements Tick
         int low = 0, high = size;
         while (low < high) {
             int mid = (low + high) >>> 1;
-            if (TicketOrder.INSTANCE.compare(items[mid], ticket) < 0) low = mid + 1;
+            if (TicketOrder.INSTANCE.compare(elementAt(mid), ticket) < 0) low = mid + 1;
             else high = mid;
         }
         return low;

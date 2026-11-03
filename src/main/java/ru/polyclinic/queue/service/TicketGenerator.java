@@ -1,6 +1,7 @@
 package ru.polyclinic.queue.service;
 
 import java.util.Random;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
 
 import ru.polyclinic.queue.model.HomeVisitTicket;
@@ -12,13 +13,25 @@ import ru.polyclinic.queue.model.Ticket;
  * <p>Формат данных соответствует demo_tickets.csv:
  * <ul>
  *   <li>ФИО — полное (Иванов Иван Иванович)</li>
- *   <li>Номер карты — 10 цифр</li>
+ *   <li>Номер карты — 10 цифр, глобально уникальный между вызовами</li>
  *   <li>~20% талонов — на дому</li>
  * </ul>
+ *
+ * <p><b>Важно:</b> номера карт выдаются из статического {@link AtomicLong},
+ * а не из локального random-base. Раньше при count близком к 100k два
+ * последовательных вызова генератора гарантированно перекрывались по
+ * диапазону карт (bound = 9e9/count ≈ 90k, а карт 100k) — второй прогон
+ * давал почти стопроцентные дубликаты.
  */
 public final class TicketGenerator {
 
-    // Полные фамилии (мужские и женские формы)
+    /**
+     * Глобальный счётчик номеров карт. Стартует в 10-значном диапазоне
+     * (1_000_000_000+), инкрементируется на count за вызов. Гарантирует,
+     * что два вызова generate() не пересекаются даже частично.
+     */
+    private static final AtomicLong CARD_COUNTER = new AtomicLong(1_000_000_000L);
+
     private static final String[] SURNAMES_MALE = {
             "Иванов", "Петров", "Сидоров", "Козлов", "Новиков",
             "Морозов", "Волков", "Соловьёв", "Васильев", "Зайцев",
@@ -39,7 +52,6 @@ public final class TicketGenerator {
             "Смирнова", "Попова"
     };
 
-    // Мужские имена
     private static final String[] NAMES_MALE = {
             "Иван", "Пётр", "Сергей", "Андрей", "Михаил",
             "Николай", "Владимир", "Александр", "Дмитрий", "Алексей",
@@ -47,7 +59,6 @@ public final class TicketGenerator {
             "Юрий", "Олег", "Игорь", "Виктор", "Константин"
     };
 
-    // Женские имена
     private static final String[] NAMES_FEMALE = {
             "Анна", "Мария", "Елена", "Ольга", "Наталья",
             "Ирина", "Светлана", "Татьяна", "Юлия", "Екатерина",
@@ -55,7 +66,6 @@ public final class TicketGenerator {
             "Софья", "Вера", "Надежда", "Любовь", "Галина"
     };
 
-    // Отчества
     private static final String[] PATRONYMICS_MALE = {
             "Иванович", "Петрович", "Сергеевич", "Андреевич", "Михайлович",
             "Николаевич", "Владимирович", "Александрович", "Дмитриевич", "Алексеевич",
@@ -75,7 +85,7 @@ public final class TicketGenerator {
             "201", "202", "203", "204", "205",
             "301", "302", "303", "310", "311",
             "401", "402", "405", "410", "415",
-            "104а"  // кабинет с буквой (как в demo)
+            "104а"  // кириллическая 'а' — так в демо-данных
     };
 
     private static final String[] STREETS = {
@@ -104,6 +114,11 @@ public final class TicketGenerator {
     /**
      * Генерирует массив талонов с колбэком прогресса.
      *
+     * <p>Номера карт выдаются из глобального {@link #CARD_COUNTER}: каждый
+     * вызов резервирует непрерывный блок [start, start+count). Пересечений
+     * между вызовами нет, даже если один и тот же экземпляр используется
+     * многократно или создаются разные экземпляры.
+     *
      * @param count    количество талонов (≥ 0)
      * @param progress колбэк (готово, всего); может быть null
      */
@@ -116,15 +131,21 @@ public final class TicketGenerator {
         }
 
         Ticket[] result = new Ticket[count];
-        long baseCardNumber = 1_000_000_000L + random.nextLong(9_000_000_000L / count);
+
+        // Резервируем непрерывный блок карт — getAndAdd потокобезопасен,
+        // два параллельных generate() получат непересекающиеся диапазоны.
+        long startCard = CARD_COUNTER.getAndAdd(count);
 
         for (int i = 0; i < count; i++) {
-            // ДВОЙНАЯ проверка отмены
             if (Thread.currentThread().isInterrupted()) {
+                // Откатываем счётчик: карты из этого блока не будут использованы,
+                // но если не вернуть — следующая генерация начнётся дальше, что
+                // тоже корректно, просто диапазон "съеден". Для лабораторной
+                // проще не возвращать (иначе гонка), а просто выбросить.
                 throw new RuntimeException("Генерация отменена пользователем");
             }
 
-            String cardNumber = String.valueOf(baseCardNumber + i);
+            String cardNumber = String.valueOf(startCard + i);
             result[i] = generateOne(cardNumber);
 
             if (progress != null && (i % 100 == 0 || i == count - 1)) {
@@ -147,12 +168,10 @@ public final class TicketGenerator {
                 ? PATRONYMICS_FEMALE[random.nextInt(PATRONYMICS_FEMALE.length)]
                 : PATRONYMICS_MALE[random.nextInt(PATRONYMICS_MALE.length)];
 
-        // Полное ФИО: "Иванов Иван Иванович"
         String fullName = surname + " " + name + " " + patronymic;
         String office = OFFICES[random.nextInt(OFFICES.length)];
-        int urgency = random.nextInt(4); // 0–3
+        int urgency = random.nextInt(4);
 
-        // ~20% — талон на дому
         if (random.nextDouble() < HOME_VISIT_PROBABILITY) {
             String address = randomAddress();
             return new HomeVisitTicket(cardNumber, fullName, office, urgency, address);

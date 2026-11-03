@@ -12,20 +12,25 @@ public final class HeapTicketQueueStore<T extends Ticket> implements TicketQueue
 
     private static final int DEFAULT_CAPACITY = 16;
 
-    private T[] heap;
+    // Object[] вместо T[]: единственное честное представление для генерика.
+    // Каст в T происходит только в elementAt(), где гарантированно лежит T.
+    private Object[] heap;
     private int size;
     private Set<Integer> lastVisited = new HashSet<>();
 
-    @SuppressWarnings("unchecked")
     public HeapTicketQueueStore() {
         this(DEFAULT_CAPACITY);
     }
 
-    @SuppressWarnings("unchecked")
     public HeapTicketQueueStore(int capacity) {
         if (capacity <= 0) throw new IllegalArgumentException("Capacity must be positive");
-        heap = (T[]) new Ticket[capacity]; // Каст для дженериков
+        heap = new Object[capacity];
         size = 0;
+    }
+
+    @SuppressWarnings("unchecked")
+    private T elementAt(int i) {
+        return (T) heap[i];
     }
 
     private static int parent(int i) { return (i - 1) / 2; }
@@ -46,13 +51,13 @@ public final class HeapTicketQueueStore<T extends Ticket> implements TicketQueue
     @Override
     public synchronized T peek() {
         if (size == 0) throw new IllegalStateException("Heap is empty");
-        return heap[0];
+        return elementAt(0);
     }
 
     @Override
     public synchronized T poll() {
         if (size == 0) throw new IllegalStateException("Heap is empty");
-        T min = heap[0];
+        T min = elementAt(0);
         size--;
         heap[0] = heap[size];
         heap[size] = null;
@@ -63,7 +68,7 @@ public final class HeapTicketQueueStore<T extends Ticket> implements TicketQueue
     @Override
     public synchronized T findByCardNumber(String cardNumber) {
         int index = indexOfCardNumber(cardNumber);
-        return index >= 0 ? heap[index] : null;
+        return index >= 0 ? elementAt(index) : null;
     }
 
     @Override
@@ -80,8 +85,9 @@ public final class HeapTicketQueueStore<T extends Ticket> implements TicketQueue
         int index = indexOfCardNumber(cardNumber);
         if (index < 0) return false;
 
-        T oldTicket = heap[index];
-        T newTicket = (T) oldTicket.withUrgency(newUrgency); // Каст, так как withUrgency возвращает Ticket
+        T oldTicket = elementAt(index);
+        @SuppressWarnings("unchecked")
+        T newTicket = (T) oldTicket.withUrgency(newUrgency);
         heap[index] = newTicket;
 
         int cmp = TicketOrder.INSTANCE.compare(newTicket, oldTicket);
@@ -91,14 +97,13 @@ public final class HeapTicketQueueStore<T extends Ticket> implements TicketQueue
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public synchronized T[] topK(int k) {
         if (k < 0) throw new IllegalArgumentException("K must not be negative");
         int take = Math.min(k, size);
-        @SuppressWarnings("unchecked")
         T[] copy = (T[]) Arrays.copyOf(heap, size, Ticket[].class);
         for (int i = size / 2 - 1; i >= 0; i--) siftDownArray(copy, size, i);
 
-        @SuppressWarnings("unchecked")
         T[] result = (T[]) new Ticket[take];
         int end = size;
         for (int i = 0; i < take; i++) {
@@ -128,10 +133,9 @@ public final class HeapTicketQueueStore<T extends Ticket> implements TicketQueue
     @Override public synchronized boolean isEmpty() { return size == 0; }
 
     @Override
+    @SuppressWarnings("unchecked")
     public synchronized T[] snapshot() {
-        @SuppressWarnings("unchecked")
-        T[] copy = (T[]) Arrays.copyOf(heap, size, Ticket[].class);
-        return copy;
+        return (T[]) Arrays.copyOf(heap, size, Ticket[].class);
     }
 
     public synchronized void clear() {
@@ -141,9 +145,16 @@ public final class HeapTicketQueueStore<T extends Ticket> implements TicketQueue
 
     public synchronized String dump() {
         if (size == 0) return "(куча пуста)";
-        // ... (код dump() и formatLabel() оставляем без изменений, он отличный)
-        // Для экономии места я не дублирую его здесь, вставь свой старый код.
-        return "Dump placeholder"; // ЗАМЕНИ НА СВОЙ СТАРЫЙ КОД DUMP
+        StringBuilder sb = new StringBuilder("Двоичная min-куча (массив):\n");
+        for (int i = 0; i < size; i++) {
+            T t = elementAt(i);
+            sb.append("  [").append(i).append("] ")
+                    .append(t.getCardNumber())
+                    .append(" / ").append(t.getFullName())
+                    .append(" / ur=").append(t.getUrgency())
+                    .append('\n');
+        }
+        return sb.toString();
     }
 
     public synchronized Set<Integer> getLastVisited() { return Set.copyOf(lastVisited); }
@@ -157,7 +168,7 @@ public final class HeapTicketQueueStore<T extends Ticket> implements TicketQueue
 
     private int indexOfCardNumber(String cardNumber) {
         for (int i = 0; i < size; i++) {
-            if (heap[i].getCardNumber().equals(cardNumber)) return i;
+            if (elementAt(i).getCardNumber().equals(cardNumber)) return i;
         }
         return -1;
     }
@@ -167,7 +178,7 @@ public final class HeapTicketQueueStore<T extends Ticket> implements TicketQueue
         if (index != size) {
             heap[index] = heap[size];
             heap[size] = null;
-            if (index > 0 && TicketOrder.INSTANCE.compare(heap[index], heap[parent(index)]) < 0) {
+            if (index > 0 && TicketOrder.INSTANCE.compare(elementAt(index), elementAt(parent(index))) < 0) {
                 siftUp(index);
             } else {
                 siftDown(index);
@@ -183,7 +194,7 @@ public final class HeapTicketQueueStore<T extends Ticket> implements TicketQueue
             int p = parent(i);
             lastVisited.add(i);
             lastVisited.add(p);
-            if (TicketOrder.INSTANCE.compare(heap[i], heap[p]) < 0) {
+            if (TicketOrder.INSTANCE.compare(elementAt(i), elementAt(p)) < 0) {
                 swap(i, p);
                 i = p;
             } else break;
@@ -196,12 +207,12 @@ public final class HeapTicketQueueStore<T extends Ticket> implements TicketQueue
             int smallest = leftChild(i);
             int right = rightChild(i);
             lastVisited.add(i);
-            if (right < size && TicketOrder.INSTANCE.compare(heap[right], heap[smallest]) < 0) {
+            if (right < size && TicketOrder.INSTANCE.compare(elementAt(right), elementAt(smallest)) < 0) {
                 smallest = right;
                 lastVisited.add(right);
             }
             lastVisited.add(smallest);
-            if (TicketOrder.INSTANCE.compare(heap[i], heap[smallest]) > 0) {
+            if (TicketOrder.INSTANCE.compare(elementAt(i), elementAt(smallest)) > 0) {
                 swap(i, smallest);
                 i = smallest;
             } else break;
@@ -209,7 +220,7 @@ public final class HeapTicketQueueStore<T extends Ticket> implements TicketQueue
     }
 
     private void swap(int i, int j) {
-        T tmp = heap[i];
+        Object tmp = heap[i];
         heap[i] = heap[j];
         heap[j] = tmp;
     }

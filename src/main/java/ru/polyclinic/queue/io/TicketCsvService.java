@@ -96,7 +96,7 @@ public class TicketCsvService {
     }
 
     private Ticket parseLine(String line, int lineNumber) {
-        String[] parts = line.split(SEPARATOR, -1);
+        String[] parts = splitCsvLine(line).toArray(new String[0]);
         if (parts.length < 7) {
             throw new IllegalArgumentException("Строка %d: недостаточно полей (ожидается 7-8, получено %d)"
                     .formatted(lineNumber, parts.length));
@@ -132,9 +132,26 @@ public class TicketCsvService {
         }
     }
 
-    /**
-     * Сохранение талонов в CSV.
-     */
+    private String formatLine(Ticket ticket) {
+        String address = "";
+        if (ticket instanceof HomeVisitTicket hvt) {
+            address = hvt.getAddress();
+        } else if (ticket instanceof ClosedTicket ct && ct.getAddressOrNull() != null) {
+            address = ct.getAddressOrNull();
+        }
+
+        return String.join(SEPARATOR,
+                escapeField(String.valueOf(ticket.getId())),
+                escapeField(ticket.getType().toString()),
+                escapeField(ticket.getCardNumber()),
+                escapeField(ticket.getFullName()),
+                escapeField(ticket.getOffice()),
+                escapeField(String.valueOf(ticket.getUrgency())),
+                escapeField(ticket.getTakenAt().toString()),
+                escapeField(address)
+        );
+    }
+
     public void save(Path path, List<Ticket> tickets) throws TicketCsvException {
         try (BufferedWriter writer = Files.newBufferedWriter(path)) {
             writer.write(HEADER);
@@ -150,23 +167,42 @@ public class TicketCsvService {
         }
     }
 
-    private String formatLine(Ticket ticket) {
-        String address = "";
-        if (ticket instanceof HomeVisitTicket hvt) {
-            address = hvt.getAddress();
-        } else if (ticket instanceof ClosedTicket ct && ct.getAddressOrNull() != null) {
-            address = ct.getAddressOrNull();
+    private static String escapeField(String value) {
+        if (value == null) return "";
+        if (value.indexOf(';') >= 0 || value.indexOf('"') >= 0
+                || value.indexOf('\n') >= 0 || value.indexOf('\r') >= 0) {
+            return "\"" + value.replace("\"", "\"\"") + "\"";
         }
+        return value;
+    }
 
-        return "%d;%s;%s;%s;%s;%d;%s;%s".formatted(
-                ticket.getId(),
-                ticket.getType(),
-                ticket.getCardNumber(),
-                ticket.getFullName(),
-                ticket.getOffice(),
-                ticket.getUrgency(),
-                ticket.getTakenAt(),
-                address
-        );
+    /** Разбор одной CSV-строки с учётом quoted-полей. */
+    private static List<String> splitCsvLine(String line) {
+        List<String> result = new ArrayList<>();
+        StringBuilder cur = new StringBuilder();
+        boolean inQuotes = false;
+        for (int i = 0; i < line.length(); i++) {
+            char c = line.charAt(i);
+            if (inQuotes) {
+                if (c == '"') {
+                    if (i + 1 < line.length() && line.charAt(i + 1) == '"') {
+                        cur.append('"'); i++;          // "" → "
+                    } else {
+                        inQuotes = false;              // закрывающая кавычка
+                    }
+                } else {
+                    cur.append(c);
+                }
+            } else if (c == '"') {
+                inQuotes = true;
+            } else if (c == ';') {
+                result.add(cur.toString());
+                cur.setLength(0);
+            } else {
+                cur.append(c);
+            }
+        }
+        result.add(cur.toString());
+        return result;
     }
 }
