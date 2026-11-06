@@ -9,7 +9,7 @@ import ru.polyclinic.queue.datastructure.DuplicateTicketException;
 import ru.polyclinic.queue.datastructure.HeapTicketQueueStore;
 import ru.polyclinic.queue.datastructure.TicketQueueStore;
 import ru.polyclinic.queue.model.ClosedTicket;
-import ru.polyclinic.queue.model.Editable;
+import ru.polyclinic.queue.model.TicketValidator;
 import ru.polyclinic.queue.model.Ticket;
 
 public final class QueueService {
@@ -22,7 +22,7 @@ public final class QueueService {
 
     public synchronized void add(Ticket ticket) {
         if (ticket instanceof ClosedTicket) {
-            throw new IllegalArgumentException("Закрытый талон нельзя поставить в очередь");
+            throw new IllegalArgumentException("закрытый талон нельзя поставить в очередь");
         }
         if (!knownCards.add(ticket.getCardNumber())) {
             throw new DuplicateTicketException(ticket.getCardNumber());
@@ -39,11 +39,9 @@ public final class QueueService {
     }
 
     public synchronized void updateTicket(Ticket updated) {
-        if (!(updated instanceof Editable)) {
-            throw new IllegalArgumentException("Закрытый талон нельзя редактировать");
+        if (updated == null || updated instanceof ClosedTicket) {
+            throw new IllegalArgumentException("закрытый талон нельзя редактировать");
         }
-        // Номер карты не меняется (в GUI поле заблокировано),
-        // поэтому knownCards не трогаем.
         queue.removeByCardNumber(updated.getCardNumber());
         queue.add(updated);
     }
@@ -66,27 +64,17 @@ public final class QueueService {
     public synchronized int queueSize()      { return queue.size(); }
     public synchronized boolean isQueueEmpty() { return queue.isEmpty(); }
 
-    /**
-     * Слияние. ВАЖНО: knownCards и archivedIds — кэши поверх очереди и архива.
-     * Их нельзя оставлять в рассогласованном состоянии, иначе проверка
-     * дубликатов сломается. Поэтому сначала снимаем snapshot ДО слияния
-     * (queue.merge очищает other), потом сливаем, потом синхронизируем кэши.
-     */
     public synchronized void merge(QueueService other) {
         if (other == null || other == this) return;
 
-        // 1. Снимок очереди other ДО слияния: queue.merge его очистит.
         Ticket[] incomingQueue = other.queue.snapshot();
 
-        // 2. Слияние структур.
         queue.merge(other.queue);
 
-        // 3. Синхронизируем knownCards — теперь эти карты у нас в очереди.
         for (Ticket t : incomingQueue) {
             knownCards.add(t.getCardNumber());
         }
 
-        // 4. Переносим архив с дедупликацией по id.
         for (ClosedTicket c : other.getArchive()) {
             if (archivedIds.add(c.getId())) {
                 archive.add(c);
@@ -110,7 +98,9 @@ public final class QueueService {
         }
     }
 
-    public synchronized List<ClosedTicket> getArchive() { return List.copyOf(archive); }
+    public synchronized List<ClosedTicket> getArchive() {
+        return List.copyOf(archive);
+    }
 
     public synchronized boolean removeFromArchive(long ticketId) {
         boolean removed = archive.removeIf(t -> t.getId() == ticketId);
@@ -125,16 +115,19 @@ public final class QueueService {
 
     public synchronized void loadAll(List<Ticket> tickets) {
         for (Ticket ticket : tickets) {
+            List<String> errors = TicketValidator.validate(ticket);
+            if (!errors.isEmpty()) {
+                System.err.println("Пропущен битый талон: " + ticket + ". Ошибки: " + errors);
+                continue;
+            }
+
             if (ticket instanceof ClosedTicket closed) {
-                if (archivedIds.add(closed.getId())) {
-                    archive.add(closed);
-                }
-            } else if (knownCards.add(ticket.getCardNumber())) {
-                queue.add(ticket);
+                if (archivedIds.add(closed.getId())) archive.add(closed);
+            } else {
+                if (knownCards.add(ticket.getCardNumber())) queue.add(ticket);
             }
         }
     }
-
     public synchronized List<Ticket> exportAll() {
         List<Ticket> all = new ArrayList<>();
         for (Ticket ticket : queue.snapshot()) all.add(ticket);

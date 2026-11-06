@@ -11,9 +11,7 @@ public class JsonDataSerializer implements DataSerializer {
 
     public JsonDataSerializer() {
         mapper = new ObjectMapper();
-        // Чтобы Jackson понимал LocalDateTime
         mapper.registerModule(new JavaTimeModule());
-        // Чтобы красиво выводил (с отступами)
         mapper.enable(com.fasterxml.jackson.databind.SerializationFeature.INDENT_OUTPUT);
     }
 
@@ -24,7 +22,6 @@ public class JsonDataSerializer implements DataSerializer {
 
     @Override
     public List<Ticket> load(File file) throws Exception {
-        // Используем TypeReference, чтобы Jackson знал, что это список талонов
         return mapper.readValue(file, new com.fasterxml.jackson.core.type.TypeReference<List<Ticket>>() {});
     }
 

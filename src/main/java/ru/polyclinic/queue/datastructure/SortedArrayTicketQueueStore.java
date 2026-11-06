@@ -17,7 +17,7 @@ public final class SortedArrayTicketQueueStore<T extends Ticket> implements Tick
     }
 
     public SortedArrayTicketQueueStore(int capacity) {
-        if (capacity <= 0) throw new IllegalArgumentException("Capacity must be positive");
+        if (capacity <= 0) throw new IllegalArgumentException("capacity должен быть положительным");
         items = new Object[capacity];
         size = 0;
     }
@@ -29,8 +29,8 @@ public final class SortedArrayTicketQueueStore<T extends Ticket> implements Tick
 
     @Override
     public synchronized void add(T ticket) {
-        if (ticket == null) throw new IllegalArgumentException("Ticket cannot be null");
-        if (!(ticket instanceof Editable)) throw new IllegalArgumentException("Закрытый талон нельзя поставить в живую очередь");
+        if (ticket == null) throw new IllegalArgumentException("талон не может быть пустым");
+        if (!(ticket instanceof Editable)) throw new IllegalArgumentException("закрытый талон нельзя поставить в живую очередь");
 
         if (size == items.length) items = Arrays.copyOf(items, items.length * 2);
 
@@ -42,7 +42,7 @@ public final class SortedArrayTicketQueueStore<T extends Ticket> implements Tick
 
     @Override
     public synchronized T peek() {
-        if (size == 0) throw new IllegalStateException("Queue is empty");
+        if (size == 0) throw new IllegalStateException("очередь пуста");
         return elementAt(0);
     }
 
@@ -71,7 +71,7 @@ public final class SortedArrayTicketQueueStore<T extends Ticket> implements Tick
 
     @Override
     public synchronized boolean changePriority(String cardNumber, int newUrgency) {
-        if (newUrgency < 0 || newUrgency > 3) throw new IllegalArgumentException("Urgency must be in range [0, 3]");
+        if (newUrgency < 0 || newUrgency > 3) throw new IllegalArgumentException("urgency должен быть в диапазоне [0, 3]");
         int index = indexOfCardNumber(cardNumber);
         if (index < 0) return false;
 
@@ -86,7 +86,7 @@ public final class SortedArrayTicketQueueStore<T extends Ticket> implements Tick
     @Override
     @SuppressWarnings("unchecked")
     public synchronized T[] topK(int k) {
-        if (k < 0) throw new IllegalArgumentException("K must not be negative");
+        if (k < 0) throw new IllegalArgumentException("k не должно быть отрицательным");
         return (T[]) Arrays.copyOfRange(items, 0, Math.min(k, size), Ticket[].class);
     }
 

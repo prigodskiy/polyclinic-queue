@@ -2,9 +2,7 @@ package ru.polyclinic.queue.io;
 
 import java.io.Serial;
 
-/** Ошибка чтения/записи CSV с кодом (уровень «максимум» лабы 1). */
 public final class TicketCsvException extends Exception {
-
     @Serial
     private static final long serialVersionUID = 1L;
 

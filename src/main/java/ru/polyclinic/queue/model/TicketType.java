@@ -20,13 +20,12 @@ public enum TicketType {
         return displayName;
     }
 
-    // НОВОЕ: Поиск типа талона по строке (понимает и "REGULAR", и "Обычный")
     public static TicketType fromString(String text) {
         for (TicketType type : TicketType.values()) {
             if (type.name().equalsIgnoreCase(text) || type.displayName.equalsIgnoreCase(text)) {
                 return type;
             }
         }
-        throw new IllegalArgumentException("Неизвестный тип талона: " + text);
+        throw new IllegalArgumentException("неизвестный тип талона: " + text);
     }
 }

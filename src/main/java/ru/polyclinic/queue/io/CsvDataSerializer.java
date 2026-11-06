@@ -10,14 +10,13 @@ public class CsvDataSerializer implements DataSerializer {
 
     @Override
     public void save(File file, List<Ticket> tickets) throws Exception {
-        csv.save(Path.of(file.toURI()), tickets); // Предполагается, что твой CSV умеет в List<Ticket>
+        csv.save(Path.of(file.toURI()), tickets);
     }
 
     @Override
     public List<Ticket> load(File file) throws Exception {
         ru.polyclinic.queue.io.CsvLoadResult result = csv.load(file.toPath());
 
-        // Если ни один талон не прочитался, но были ошибки — бросаем исключение
         if (result.tickets().isEmpty() && !result.errors().isEmpty()) {
             throw new Exception("Ошибка CSV: " + result.errors().get(0).message());
         }

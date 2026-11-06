@@ -14,16 +14,7 @@ import ru.polyclinic.queue.model.HomeVisitTicket;
 import ru.polyclinic.queue.model.Ticket;
 import ru.polyclinic.queue.model.Editable;
 
-/**
- * Таблица талонов: колонки берутся из модели, без instanceof-цепочек.
- *
- * <p>Один класс используется дважды: обычная таблица очереди и read-only
- * таблица архива ({@code archiveMode = true}) — в архивной версии другое
- * сообщение-заглушка, выделение строк доступно, но кнопки правки отсекаются
- * проверкой {@code Editable} на уровне приложения.
- */
 public final class TicketTable extends TableView<Ticket> {
-
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("dd.MM.uuuu HH:mm:ss");
 
     private final ObservableList<Ticket> rows = FXCollections.observableArrayList();
@@ -75,17 +66,16 @@ public final class TicketTable extends TableView<Ticket> {
         });
 
         getColumns().setAll(java.util.List.of(type, card, name, office, urgency, taken, address));
-        // CONSTRAINED_RESIZE_POLICY есть и в JavaFX 17, и в 21 — кросс-версионно.
-        setColumnResizePolicy(CONSTRAINED_RESIZE_POLICY);
+        setColumnResizePolicy(CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
         address.setMinWidth(180);
     }
 
-    /** Перерисовать по снимку (GUI не держит ссылку на внутреннее хранилище). */
     public void refresh(Ticket[] snapshot) {
         rows.setAll(snapshot);
     }
 
     public boolean isEditableSelected() {
-        return getSelectionModel().getSelectedItem() instanceof Editable;
+        Ticket selected = getSelectionModel().getSelectedItem();
+        return selected != null && !(selected instanceof ClosedTicket);
     }
 }

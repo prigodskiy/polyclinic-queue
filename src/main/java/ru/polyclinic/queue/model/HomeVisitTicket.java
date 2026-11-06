@@ -5,9 +5,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-/** Талон на дому: редактируемый талон с дополнительным полем «адрес». */
 public final class HomeVisitTicket extends Ticket implements Editable, java.io.Serializable {
-    private static final long serialVersionUID = 1L; // Обязательно для сериализации
+    private static final long serialVersionUID = 1L;
 
     private final String address;
 
@@ -17,7 +16,6 @@ public final class HomeVisitTicket extends Ticket implements Editable, java.io.S
         this.address = requireAddress(address);
     }
 
-    /** Заводской конструктор для десериализации и копий. */
     @com.fasterxml.jackson.annotation.JsonCreator
     public HomeVisitTicket(
             @com.fasterxml.jackson.annotation.JsonProperty("id") long id,
@@ -32,9 +30,9 @@ public final class HomeVisitTicket extends Ticket implements Editable, java.io.S
     }
 
     private static String requireAddress(String address) {
-        String stripped = Objects.requireNonNull(address, "address must not be null").strip();
+        String stripped = Objects.requireNonNull(address, "address не должен быть null").strip();
         if (stripped.isEmpty()) {
-            throw new IllegalArgumentException("Address cannot be blank");
+            throw new IllegalArgumentException("address не может быть blank");
         }
         return stripped;
     }
@@ -53,7 +51,6 @@ public final class HomeVisitTicket extends Ticket implements Editable, java.io.S
         return withAddress(newFullName, newOffice, newUrgency, null);
     }
 
-    /** Копия с новым адресом; {@code null} = оставить прежний. */
     public HomeVisitTicket withAddress(String newFullName, String newOffice,
                                        Integer newUrgency, String newAddress) {
         return new HomeVisitTicket(
@@ -76,9 +73,6 @@ public final class HomeVisitTicket extends Ticket implements Editable, java.io.S
         }
         return List.copyOf(errors);
     }
-
-    // equals/hashCode наследуются от Ticket: идентичность по id — безопасно
-    // для кучи (объекты в массиве не «исчезают» после changePriority).
 
     @Override
     public String toString() {

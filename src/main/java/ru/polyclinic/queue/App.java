@@ -103,12 +103,12 @@ public final class App extends Application {
         formatCombo.getItems().addAll(serializers);
         formatCombo.getSelectionModel().selectFirst();
 
-        Button accept = new Button("Принять пациента");
-        accept.setOnAction(e -> acceptNext());
-        Button add = new Button("Создать талон");
-        add.setOnAction(e -> addTicket());
-        Button generate = new Button("Сгенерировать талоны");
-        generate.setOnAction(e -> generateTickets());
+        Button acceptButton = new Button("Принять пациента");
+        acceptButton.setOnAction(e -> acceptNext());
+        Button addButton = new Button("Создать талон");
+        addButton.setOnAction(e -> addTicket());
+        Button generateButton = new Button("Сгенерировать талоны");
+        generateButton.setOnAction(e -> generateTickets());
 
         editButton = new Button("Править талон");
         editButton.setOnAction(e -> editSelected());
@@ -124,19 +124,19 @@ public final class App extends Application {
                 (obs, oldVal, newVal) -> updateEditState.run());
         updateEditButtonState();
 
-        Button loadCsv = new Button("Загрузить файл");
-        loadCsv.setOnAction(e -> openFileDialog());
-        Button appendCsv = new Button("Добавить файл");
-        appendCsv.setOnAction(e -> mergeFromFile());
-        Button saveCsv = new Button("Сохранить файл");
-        saveCsv.setOnAction(e -> saveFile());
-        Button benchmarkBtn = new Button("Бенчмарк");
-        benchmarkBtn.setOnAction(e -> {
+        Button loadButton = new Button("Загрузить файл");
+        loadButton.setOnAction(e -> openFileDialog());
+        Button appendButton = new Button("Добавить файл");
+        appendButton.setOnAction(e -> mergeFromFile());
+        Button saveButton = new Button("Сохранить файл");
+        saveButton.setOnAction(e -> saveFile());
+        Button benchmarkButton = new Button("Бенчмарк");
+        benchmarkButton.setOnAction(e -> {
             if (backgroundBusy) { showError("Занято", "Подождите"); return; }
 
             backgroundBusy = true;
-            benchmarkBtn.setDisable(true);
-            System.out.println("[БЕНЧМАРК] Запуск... (может занять 15-30 секунд)");
+            benchmarkButton.setDisable(true);
+            System.out.println("[БЕНЧМАРК] Запуск");
 
             Task<String> task = new Task<>() {
                 @Override
@@ -146,9 +146,9 @@ public final class App extends Application {
             };
 
             task.setOnSucceeded(evt -> {
-                System.out.println("[БЕНЧМАРК] Готово.");
+                System.out.println("[БЕНЧМАРК] Готово");
                 backgroundBusy = false;
-                benchmarkBtn.setDisable(false);
+                benchmarkButton.setDisable(false);
                 Alert alert = new Alert(Alert.AlertType.INFORMATION, task.getValue());
                 alert.setTitle("Замеры производительности");
                 alert.setHeaderText("Сравнение структур данных");
@@ -156,13 +156,12 @@ public final class App extends Application {
                 alert.showAndWait();
             });
 
-            // ЭТОГО НЕ ХВАТАЛО — без него ошибки молчат
             task.setOnFailed(evt -> {
-                System.out.println("[БЕНЧМАРК] ОШИБКА!");
+                System.out.println("[БЕНЧМАРК] Ошибка");
                 Throwable ex = task.getException();
                 if (ex != null) ex.printStackTrace();
                 backgroundBusy = false;
-                benchmarkBtn.setDisable(false);
+                benchmarkButton.setDisable(false);
                 showError("Ошибка бенчмарка",
                         ex != null ? ex.toString() : "Неизвестная ошибка");
             });
@@ -170,9 +169,9 @@ public final class App extends Application {
             new Thread(task).start();
         });
 
-        Button raceBtn = new Button("Демо-гонки");
-        raceBtn.setOnAction(e -> {
-            System.out.println("[ГОНКИ] Запуск...");
+        Button raceButton = new Button("Демо-гонки");
+        raceButton.setOnAction(e -> {
+            System.out.println("[ГОНКИ] Запуск");
             try {
                 String result = ConcurrencyDemo.demonstrate();
                 System.out.println(result);
@@ -200,10 +199,10 @@ public final class App extends Application {
         HBox.setHgrow(spacer1, Priority.ALWAYS);
         HBox.setHgrow(spacer2, Priority.ALWAYS);
 
-        HBox box = new HBox(8, accept, add, generate, spacer1,
+        HBox box = new HBox(8, acceptButton, addButton, generateButton, spacer1,
                 editButton, remove, spacer2,
-                loadCsv, appendCsv, saveCsv, formatCombo,
-                progressBar, cancelButton, benchmarkBtn, raceBtn, statusLabel);
+                loadButton, appendButton, saveButton, formatCombo,
+                progressBar, cancelButton, benchmarkButton, raceButton, statusLabel);
         box.setPadding(new Insets(10));
         box.setAlignment(Pos.CENTER);
         return box;
@@ -278,10 +277,6 @@ public final class App extends Application {
         refresh();
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // ГЕНЕРАЦИЯ ТАЛОНОВ
-    // ═══════════════════════════════════════════════════════════════
-
     private void generateTickets() {
         if (backgroundBusy) {
             showError("Занято", "Дождитесь завершения текущей операции.");
@@ -331,9 +326,9 @@ public final class App extends Application {
 
         task.setOnSucceeded(e -> {
             if (cancelled) {
-                System.out.println("[ОТМЕНА] Генерация отменена - талоны НЕ добавлены");
+                System.out.println("генерация отменена - талоны не добавлены");
                 Platform.runLater(() -> {
-                    new Alert(Alert.AlertType.INFORMATION, "Генерация отменена.").showAndWait();
+                    new Alert(Alert.AlertType.INFORMATION, "Генерация отменена").showAndWait();
                     cleanup();
                 });
                 return;
@@ -345,7 +340,6 @@ public final class App extends Application {
                 return;
             }
 
-            // Переходим к фазе добавления
             addAllTicketsInBackground(tickets, count);
         });
 
@@ -377,10 +371,6 @@ public final class App extends Application {
         currentThread.setDaemon(true);
         currentThread.start();
     }
-
-    // ═══════════════════════════════════════════════════════════════
-    // ЗАГРУЗКА CSV
-    // ═══════════════════════════════════════════════════════════════
 
     private void openFileDialog() {
         if (backgroundBusy) {
@@ -439,9 +429,7 @@ public final class App extends Application {
         Task<CsvLoadResult> task = new Task<CsvLoadResult>() {
             @Override
             protected CsvLoadResult call() throws Exception {
-                // Вызываем абстрактный метод load
                 List<Ticket> loadedTickets = serializer.load(file);
-                // Оборачиваем в CsvLoadResult (ошибок нет, так как JSON/Binary падают целиком при ошибке)
                 return new CsvLoadResult(loadedTickets, List.of());
             }
         };
@@ -451,7 +439,7 @@ public final class App extends Application {
 
         task.setOnSucceeded(e -> {
             if (cancelled) {
-                System.out.println("[ОТМЕНА] Загрузка отменена - талоны НЕ добавлены");
+                System.out.println("[ОТМЕНА] Загрузка отменена - талоны не добавлены");
                 Platform.runLater(() -> {
                     new Alert(Alert.AlertType.INFORMATION, "Загрузка отменена.").showAndWait();
                     cleanup();
@@ -477,7 +465,7 @@ public final class App extends Application {
         task.setOnFailed(e -> {
             if (cancelled) {
                 Platform.runLater(() -> {
-                    new Alert(Alert.AlertType.INFORMATION, "Загрузка отменена.").showAndWait();
+                    new Alert(Alert.AlertType.INFORMATION, "Загрузка отменена").showAndWait();
                     cleanup();
                 });
                 return;
@@ -493,7 +481,7 @@ public final class App extends Application {
         task.setOnCancelled(e -> {
             cancelled = true;
             Platform.runLater(() -> {
-                new Alert(Alert.AlertType.INFORMATION, "Загрузка отменена.").showAndWait();
+                new Alert(Alert.AlertType.INFORMATION, "Загрузка отменена").showAndWait();
                 cleanup();
             });
         });
@@ -502,10 +490,6 @@ public final class App extends Application {
         currentThread.setDaemon(true);
         currentThread.start();
     }
-
-    // ═══════════════════════════════════════════════════════════════
-    // ДОБАВЛЕНИЕ ТАЛОНОВ В ФОНЕ (С ОТКАТОМ ПРИ ОТМЕНЕ)
-    // ═══════════════════════════════════════════════════════════════
 
     private void addAllTicketsInBackground(Ticket[] tickets, int totalCount) {
         if (cancelled) {
@@ -524,7 +508,6 @@ public final class App extends Application {
 
                 for (int i = 0; i < tickets.length; i++) {
                     if (cancelled) {
-                        // ОТКАТ
                         for (Ticket t : addedQueue) service.removeByCardNumber(t.getCardNumber());
                         for (ClosedTicket c : addedArchive) service.removeFromArchive(c.getId());
                         return new AddResult(0, 0, 0, true);
@@ -539,7 +522,7 @@ public final class App extends Application {
                             service.add(t);
                             addedQueue.add(t);
                         } catch (DuplicateTicketException e) {
-                            duplicates++; // Больше не проглатываем молча!
+                            duplicates++;
                         }
                     }
 
@@ -587,16 +570,10 @@ public final class App extends Application {
         currentThread.start();
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // ОТМЕНА И ОЧИСТКА
-    // ═══════════════════════════════════════════════════════════════
-
     private void cancelBackgroundTask() {
         System.out.println("[ОТМЕНА] cancelBackgroundTask() вызван");
         cancelled = true;
 
-        // Если мы в фазе добавления, мы НЕ прерываем поток жестко,
-        // чтобы он успел откатить изменения. Он сам завершится, увидев cancelled = true.
         if (!addPhase) {
             if (currentTask != null) {
                 currentTask.cancel();
@@ -725,15 +702,12 @@ public final class App extends Application {
 
     private void loadFromSilently(File file) {
         try {
-            // Используем CSV-сериализатор для демо-файла
             DataSerializer serializer = new ru.polyclinic.queue.io.CsvDataSerializer();
             List<Ticket> loadedTickets = serializer.load(file);
 
             service.loadAll(loadedTickets);
             service.printStructure();
         } catch (Exception error) {
-            // Ловим общее исключение, так как интерфейс DataSerializer бросает Exception.
-            // Стартуем с пустой очередью, если демо-файл битый или отсутствует.
             System.err.println("Не удалось загрузить демо-файл: " + error.getMessage());
         }
     }

@@ -12,7 +12,6 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class QueueServiceTest {
-
     private static Ticket regular(String card) {
         return new Ticket(card, "Иван Иванович", "101", 2);
     }
@@ -29,7 +28,6 @@ class QueueServiceTest {
         QueueService s = new QueueService();
         s.add(regular("100"));
         s.acceptNext();
-        // после обслуживания карта освобождается — можно добавить снова
         assertDoesNotThrow(() -> s.add(regular("100")));
     }
 
@@ -59,7 +57,6 @@ class QueueServiceTest {
         assertThrows(IllegalArgumentException.class, () -> s.topK(-1));
     }
 
-    /** РЕГРЕССИЯ: до фикса merge не пополнял knownCards — дубликат проходил. */
     @Test
     void mergeKeepsDuplicateDetection() {
         QueueService a = new QueueService();

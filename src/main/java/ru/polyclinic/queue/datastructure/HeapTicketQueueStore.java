@@ -12,8 +12,6 @@ public final class HeapTicketQueueStore<T extends Ticket> implements TicketQueue
 
     private static final int DEFAULT_CAPACITY = 16;
 
-    // Object[] вместо T[]: единственное честное представление для генерика.
-    // Каст в T происходит только в elementAt(), где гарантированно лежит T.
     private Object[] heap;
     private int size;
     private Set<Integer> lastVisited = new HashSet<>();
@@ -23,7 +21,7 @@ public final class HeapTicketQueueStore<T extends Ticket> implements TicketQueue
     }
 
     public HeapTicketQueueStore(int capacity) {
-        if (capacity <= 0) throw new IllegalArgumentException("Capacity must be positive");
+        if (capacity <= 0) throw new IllegalArgumentException("capacity должен быть положительным");
         heap = new Object[capacity];
         size = 0;
     }
@@ -39,8 +37,8 @@ public final class HeapTicketQueueStore<T extends Ticket> implements TicketQueue
 
     @Override
     public synchronized void add(T ticket) {
-        if (ticket == null) throw new IllegalArgumentException("Ticket cannot be null");
-        if (!(ticket instanceof Editable)) throw new IllegalArgumentException("Закрытый талон нельзя поставить в живую очередь");
+        if (ticket == null) throw new IllegalArgumentException("талон не может быть пустым");
+        if (!(ticket instanceof Editable)) throw new IllegalArgumentException("закрытый талон нельзя поставить в живую очередь");
 
         ensureCapacity();
         heap[size] = ticket;
@@ -50,13 +48,13 @@ public final class HeapTicketQueueStore<T extends Ticket> implements TicketQueue
 
     @Override
     public synchronized T peek() {
-        if (size == 0) throw new IllegalStateException("Heap is empty");
+        if (size == 0) throw new IllegalStateException("куча пуста");
         return elementAt(0);
     }
 
     @Override
     public synchronized T poll() {
-        if (size == 0) throw new IllegalStateException("Heap is empty");
+        if (size == 0) throw new IllegalStateException("куча пуста");
         T min = elementAt(0);
         size--;
         heap[0] = heap[size];
@@ -81,7 +79,7 @@ public final class HeapTicketQueueStore<T extends Ticket> implements TicketQueue
 
     @Override
     public synchronized boolean changePriority(String cardNumber, int newUrgency) {
-        if (newUrgency < 0 || newUrgency > 3) throw new IllegalArgumentException("Urgency must be in range [0, 3]");
+        if (newUrgency < 0 || newUrgency > 3) throw new IllegalArgumentException("urgency должен быть в диапазоне [0, 3]");
         int index = indexOfCardNumber(cardNumber);
         if (index < 0) return false;
 
@@ -99,7 +97,7 @@ public final class HeapTicketQueueStore<T extends Ticket> implements TicketQueue
     @Override
     @SuppressWarnings("unchecked")
     public synchronized T[] topK(int k) {
-        if (k < 0) throw new IllegalArgumentException("K must not be negative");
+        if (k < 0) throw new IllegalArgumentException("k не должно быть отрицательным");
         int take = Math.min(k, size);
         T[] copy = (T[]) Arrays.copyOf(heap, size, Ticket[].class);
         for (int i = size / 2 - 1; i >= 0; i--) siftDownArray(copy, size, i);
@@ -145,7 +143,7 @@ public final class HeapTicketQueueStore<T extends Ticket> implements TicketQueue
 
     public synchronized String dump() {
         if (size == 0) return "(куча пуста)";
-        StringBuilder sb = new StringBuilder("Двоичная min-куча (массив):\n");
+        StringBuilder sb = new StringBuilder("двоичная min-куча (массив):\n");
         for (int i = 0; i < size; i++) {
             T t = elementAt(i);
             sb.append("  [").append(i).append("] ")
@@ -159,7 +157,6 @@ public final class HeapTicketQueueStore<T extends Ticket> implements TicketQueue
 
     public synchronized Set<Integer> getLastVisited() { return Set.copyOf(lastVisited); }
 
-    // ---------- внутренние ----------
     private void ensureCapacity() {
         if (size == heap.length) {
             heap = Arrays.copyOf(heap, heap.length * 2);

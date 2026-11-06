@@ -22,17 +22,8 @@ import ru.polyclinic.queue.model.TicketField;
 import ru.polyclinic.queue.model.TicketType;
 import ru.polyclinic.queue.model.TicketValidator;
 
-/**
- * Единый диалог «Создать талон» / «Изменить талон».
- *
- * <p>Вёрстка по варианту А: каждый параметр — вертикальный блок
- * «подпись → поле фиксированной ширины → зарезервированный слот ошибки».
- * Слот ошибок существует всегда (managed=true), поэтому окно не прыгает,
- * а текст ошибки привязан ровно к своему полю.
- */
 public final class TicketDialog extends Dialog<Ticket> {
-
-    private static final double FIELD_WIDTH = 420;
+    private static final double FIELD_WIDTH = 500;
     private static final double SLOT_HEIGHT = 32;
 
     private record TypeOption(TicketType type, String displayName) {
@@ -96,7 +87,7 @@ public final class TicketDialog extends Dialog<Ticket> {
         grid.add(fieldRow("№ карты:", cardField, errorCardLabel), 0, row++);
         grid.add(fieldRow("ФИО:", nameField, errorNameLabel), 0, row++);
         grid.add(fieldRow("Кабинет:", officeField, errorOfficeLabel), 0, row++);
-        grid.add(fieldRow("Срочность (0–3):", urgencyField, errorUrgencyLabel), 0, row++);
+        grid.add(fieldRow("Срочность (0-3):", urgencyField, errorUrgencyLabel), 0, row++);
         grid.add(fieldRow("Адрес:", addressField, errorAddressLabel), 0, row);
 
         typeBox.valueProperty().addListener((obs, oldVal, newVal) -> {
@@ -175,12 +166,6 @@ public final class TicketDialog extends Dialog<Ticket> {
         return list == null ? "" : String.join("\n", list);
     }
 
-    /**
-     * Попунктовый сбор ошибок. Каждое поле проверяется НЕЗАВИСИМО от остальных:
-     * ошибка в срочности не должна прятать ошибки ФИО или кабинета. Сначала
-     * локальная проверка формата срочности, затем — модельная валидация
-     * корректно собираемого кандидата (если он собирается вообще).
-     */
     private Map<TicketField, List<String>> collectErrors(Ticket existing, boolean edit) {
         String card = edit ? existing.getCardNumber() : cardField.getText().strip();
         String name = nameField.getText().strip();
@@ -191,7 +176,6 @@ public final class TicketDialog extends Dialog<Ticket> {
 
         Map<TicketField, List<String>> result = new java.util.EnumMap<>(TicketField.class);
 
-        // 1. Локальная проверка срочности (парсится до создания объекта).
         List<String> urgencyErrors = new java.util.ArrayList<>();
         int urgency;
         try {
@@ -200,17 +184,13 @@ public final class TicketDialog extends Dialog<Ticket> {
                 urgencyErrors.add("Срочность должна быть от 0 до 3");
             }
         } catch (NumberFormatException e) {
-            urgencyErrors.add("Срочность — целое число от 0 до 3");
+            urgencyErrors.add("Срочность - целое число от 0 до 3");
             urgency = -1;
         }
         if (!urgencyErrors.isEmpty()) {
             result.put(TicketField.URGENCY, urgencyErrors);
         }
 
-        // 2. Модельная валидация остальных полей — всегда, когда можно собрать
-        //    кандидата. Срочность при этом берётся из поля только если она
-        //    корректна; иначе подставляем валидное значение-заглушку, чтобы
-        //    ошибки ФИО/кабинета/карты всё равно были видны.
         int urgencyForCandidate = (urgency >= 0 && urgency <= 3) ? urgency : 3;
         boolean candidateBuildable = !name.isEmpty() || !office.isEmpty() || !card.isEmpty();
         if (candidateBuildable) {
@@ -235,13 +215,9 @@ public final class TicketDialog extends Dialog<Ticket> {
             }
             Map<TicketField, List<String>> modelErrors = TicketValidator.validateByField(candidate);
             modelErrors.forEach((field, messages) -> {
-                // Не переносим модельные ошибки срочности — её уже показал шаг 1.
                 if (field == TicketField.URGENCY) {
                     return;
                 }
-                // Поля, которые пользователь оставил пустыми, кандидат-заглушка
-                // сделал валидными — такие ошибки игнорируем, пустые строки
-                // покажет отдельная проверка ниже.
                 result.merge(field, messages, (a, b) -> {
                     List<String> merged = new java.util.ArrayList<>(a);
                     merged.addAll(b);
@@ -250,7 +226,6 @@ public final class TicketDialog extends Dialog<Ticket> {
             });
         }
 
-        // 3. Пустые обязательные поля и адрес домашнего талона.
         if (card.isEmpty()) {
             put(result, TicketField.CARD_NUMBER, "Номер карты обязателен");
         }

@@ -52,13 +52,9 @@ class SerializerTest {
         assertNull(((ClosedTicket) loaded.get(2)).getAddressOrNull());
     }
 
-    // ── happy path для каждого формата ───────────────────────────
-
     @Test void testJsonSerialization()   throws Exception { testSerializer(new JsonDataSerializer(),   "test.json"); }
     @Test void testBinarySerialization() throws Exception { testSerializer(new BinaryDataSerializer(), "test.bin");  }
     @Test void testCsvSerialization()    throws Exception { testSerializer(new CsvDataSerializer(),    "test.csv");  }
-
-    // ── граничные случаи ────────────────────────────────────────
 
     @Test
     void saveEmptyListRoundtripJson() throws Exception {
@@ -76,13 +72,11 @@ class SerializerTest {
         assertTrue(s.load(f).isEmpty());
     }
 
-    // ── бинарный формат: магия и версия ─────────────────────────
-
     @Test
     void loadWrongMagicThrows() throws Exception {
         File f = tempDir.resolve("bad-magic.bin").toFile();
         try (DataOutputStream out = new DataOutputStream(new FileOutputStream(f))) {
-            out.writeInt(0xDEADBEEF); // не наша магия
+            out.writeInt(0xDEADBEEF);
             out.writeInt(1);
         }
         assertThrows(IOException.class, () -> new BinaryDataSerializer().load(f));
@@ -92,15 +86,11 @@ class SerializerTest {
     void loadFutureVersionThrows() throws Exception {
         File f = tempDir.resolve("future-version.bin").toFile();
         try (DataOutputStream out = new DataOutputStream(new FileOutputStream(f))) {
-            out.writeInt(0x504F4C59); // правильная магия "POLY"
-            out.writeInt(999);        // будущая версия
+            out.writeInt(0x504F4C59);
+            out.writeInt(999);
         }
         assertThrows(IOException.class, () -> new BinaryDataSerializer().load(f));
     }
-
-    // ── CSV: экранирование разделителя ──────────────────────────
-    // (если ты уже применил фикс из 1.2 — этот тест проходит;
-    //  если нет — покажет, что фикс нужен)
 
     @Test
     void csvHandlesSemicolonInAddress() throws Exception {

@@ -7,29 +7,7 @@ import java.util.function.BiConsumer;
 import ru.polyclinic.queue.model.HomeVisitTicket;
 import ru.polyclinic.queue.model.Ticket;
 
-/**
- * Генератор случайных талонов для тестирования и демонстрации.
- *
- * <p>Формат данных соответствует demo_tickets.csv:
- * <ul>
- *   <li>ФИО — полное (Иванов Иван Иванович)</li>
- *   <li>Номер карты — 10 цифр, глобально уникальный между вызовами</li>
- *   <li>~20% талонов — на дому</li>
- * </ul>
- *
- * <p><b>Важно:</b> номера карт выдаются из статического {@link AtomicLong},
- * а не из локального random-base. Раньше при count близком к 100k два
- * последовательных вызова генератора гарантированно перекрывались по
- * диапазону карт (bound = 9e9/count ≈ 90k, а карт 100k) — второй прогон
- * давал почти стопроцентные дубликаты.
- */
 public final class TicketGenerator {
-
-    /**
-     * Глобальный счётчик номеров карт. Стартует в 10-значном диапазоне
-     * (1_000_000_000+), инкрементируется на count за вызов. Гарантирует,
-     * что два вызова generate() не пересекаются даже частично.
-     */
     private static final AtomicLong CARD_COUNTER = new AtomicLong(1_000_000_000L);
 
     private static final String[] SURNAMES_MALE = {
@@ -85,7 +63,7 @@ public final class TicketGenerator {
             "201", "202", "203", "204", "205",
             "301", "302", "303", "310", "311",
             "401", "402", "405", "410", "415",
-            "104а"  // кириллическая 'а' — так в демо-данных
+            "104а"
     };
 
     private static final String[] STREETS = {
@@ -111,20 +89,9 @@ public final class TicketGenerator {
         return generate(count, null);
     }
 
-    /**
-     * Генерирует массив талонов с колбэком прогресса.
-     *
-     * <p>Номера карт выдаются из глобального {@link #CARD_COUNTER}: каждый
-     * вызов резервирует непрерывный блок [start, start+count). Пересечений
-     * между вызовами нет, даже если один и тот же экземпляр используется
-     * многократно или создаются разные экземпляры.
-     *
-     * @param count    количество талонов (≥ 0)
-     * @param progress колбэк (готово, всего); может быть null
-     */
     public Ticket[] generate(int count, BiConsumer<Integer, Integer> progress) {
         if (count < 0) {
-            throw new IllegalArgumentException("Count must not be negative");
+            throw new IllegalArgumentException("count не должен быть отрицательным");
         }
         if (count == 0) {
             return new Ticket[0];
@@ -132,17 +99,11 @@ public final class TicketGenerator {
 
         Ticket[] result = new Ticket[count];
 
-        // Резервируем непрерывный блок карт — getAndAdd потокобезопасен,
-        // два параллельных generate() получат непересекающиеся диапазоны.
         long startCard = CARD_COUNTER.getAndAdd(count);
 
         for (int i = 0; i < count; i++) {
             if (Thread.currentThread().isInterrupted()) {
-                // Откатываем счётчик: карты из этого блока не будут использованы,
-                // но если не вернуть — следующая генерация начнётся дальше, что
-                // тоже корректно, просто диапазон "съеден". Для лабораторной
-                // проще не возвращать (иначе гонка), а просто выбросить.
-                throw new RuntimeException("Генерация отменена пользователем");
+                throw new RuntimeException("генерация отменена пользователем");
             }
 
             String cardNumber = String.valueOf(startCard + i);

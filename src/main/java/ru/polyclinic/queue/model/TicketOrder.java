@@ -2,17 +2,6 @@ package ru.polyclinic.queue.model;
 
 import java.util.Comparator;
 
-/**
- * Единый источник порядка очереди: (срочность, время взятия, id).
- *
- * <p>Используется просеиванием кучи, topK, сортировкой таблицы GUI,
- * визуализацией и сериализацией — нигде больше сравнивать талоны нельзя,
- * иначе миграция формата рассинхронизирует структуру.
- *
- * <p>Tie-break по стабильному {@code id} делает порядок полным: две очереди
- * с одинаковым содержимым имеют идентичное представление (roundtrip-тесты
- * сериализации не flaky, визуализация детерминирована).
- */
 public final class TicketOrder implements Comparator<Ticket> {
 
     public static final TicketOrder INSTANCE = new TicketOrder();

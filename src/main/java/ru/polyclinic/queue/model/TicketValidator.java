@@ -6,37 +6,22 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
 
-/**
- * Единый набор правил корректности талона. Живёт в модели, потому что
- * проверку вызывают и GUI (диалог ошибок), и CSV-загрузчик (битые строки),
- * и сервис перед вставкой в очередь — правила не должны разъезжаться.
- *
- * <p>Два входа: {@link #validate(Ticket)} — общий список строк (CSV/сервис),
- * {@link #validateByField(Ticket)} — то же самое, но с привязкой к полю
- * (диалог правки показывает ошибку ровно под своим инпутом).
- */
 public final class TicketValidator {
+    private TicketValidator() {}
 
-    /** ФИО: 2–3 слова, каждое с заглавной буквы, допускаются дефис и апостроф. */
     private static final Pattern FULL_NAME_PATTERN =
             Pattern.compile("^[А-ЯЁA-Z][а-яёa-z]*([-'][А-ЯЁA-Z][а-яёa-z]*)?"
                     + "( [А-ЯЁA-Z][а-яёa-z]*([-'][А-ЯЁA-Z][а-яёa-z]*)?){1,2}$");
 
-    /** Кабинет: номер, опционально одна буква (104, 104а, 104-а). */
     private static final Pattern OFFICE_PATTERN =
             Pattern.compile("^\\d{1,4}(-?[а-яёА-ЯЁa-zA-Z])?$");
 
-    private TicketValidator() {
-    }
-
-    /** Плоский список нарушений — используется CSV-загрузчиком и QueueService. */
     public static List<String> validate(Ticket ticket) {
         List<String> errors = new ArrayList<>();
         validateByField(ticket).values().forEach(errors::addAll);
         return List.copyOf(errors);
     }
 
-    /** Нарушения с привязкой к полю; пустые поля в карту не попадают. */
     public static Map<TicketField, List<String>> validateByField(Ticket ticket) {
         Map<TicketField, List<String>> errors = new EnumMap<>(TicketField.class);
 
@@ -64,7 +49,7 @@ public final class TicketValidator {
             put(errors, TicketField.OFFICE, "Кабинет должен занимать одну строку");
         } else if (!OFFICE_PATTERN.matcher(office).matches()) {
             put(errors, TicketField.OFFICE,
-                    "Кабинет должен быть числом с возможной буквой (например, 104 или 104а)");
+                    "Кабинет должен быть числом с возможной буквой (например, 104, 104а, 104-а)");
         }
 
         int urgency = ticket.getUrgency();

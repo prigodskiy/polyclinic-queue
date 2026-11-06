@@ -15,45 +15,27 @@ import ru.polyclinic.queue.model.ClosedTicket;
 import ru.polyclinic.queue.model.HomeVisitTicket;
 import ru.polyclinic.queue.model.Ticket;
 import ru.polyclinic.queue.model.TicketType;
+import ru.polyclinic.queue.model.TicketValidator;
 
-/**
- * Сервис для загрузки/сохранения талонов в CSV.
- * Формат: id;type;card_number;patient_name;office;urgency;taken_at;address
- */
 public class TicketCsvService {
-
     private static final String SEPARATOR = ";";
     private static final String HEADER = "id;type;card_number;patient_name;office;urgency;taken_at;address";
 
-    /**
-     * Загрузка CSV без прогресса (обратная совместимость).
-     */
     public CsvLoadResult load(Path path) throws TicketCsvException {
         return load(path, null);
     }
 
-    /**
-     * Загрузка CSV с колбэком прогресса.
-     *
-     * @param path     путь к файлу
-     * @param progress колбэк (прочитано строк, всего строк); может быть null
-     * @return результат загрузки
-     * @throws TicketCsvException если файл не найден или не читается
-     */
     public CsvLoadResult load(Path path, BiConsumer<Integer, Integer> progress) throws TicketCsvException {
         if (!Files.exists(path)) {
-            throw new TicketCsvException(CsvErrorCode.FILE_NOT_FOUND, "Файл не найден: " + path);
+            throw new TicketCsvException(CsvErrorCode.FILE_NOT_FOUND, "файл не найден: " + path);
         }
 
         List<Ticket> tickets = new ArrayList<>();
         List<CsvRowError> errors = new ArrayList<>();
 
         try (BufferedReader reader = Files.newBufferedReader(path)) {
-            // Пропускаем заголовок (если есть)
             String headerLine = reader.readLine();
-            // Если заголовка нет или он неправильный — просто продолжаем
 
-            // Считаем строки для прогресса
             List<String> lines = new ArrayList<>();
             String line;
             while ((line = reader.readLine()) != null) {
@@ -66,9 +48,8 @@ public class TicketCsvService {
             int processed = 0;
 
             for (int i = 0; i < lines.size(); i++) {
-                // Проверка отмены — проверяем и interrupt, и cancelled
                 if (Thread.currentThread().isInterrupted()) {
-                    throw new TicketCsvException(CsvErrorCode.CANCELLED, "Загрузка отменена пользователем");
+                    throw new TicketCsvException(CsvErrorCode.CANCELLED, "загрузка отменена пользователем");
                 }
 
                 String currentLine = lines.get(i);
@@ -82,14 +63,13 @@ public class TicketCsvService {
                 }
 
                 processed++;
-                // Обновляем прогресс чаще — каждые 50 строк
                 if (progress != null && (processed % 50 == 0 || processed == total)) {
                     progress.accept(processed, total);
                 }
             }
 
         } catch (IOException e) {
-            throw new TicketCsvException(CsvErrorCode.IO_ERROR, "Ошибка чтения файла: " + e.getMessage());
+            throw new TicketCsvException(CsvErrorCode.IO_ERROR, "ошибка чтения файла: " + e.getMessage());
         }
 
         return new CsvLoadResult(tickets, errors);
@@ -114,7 +94,7 @@ public class TicketCsvService {
 
             TicketType type = TicketType.fromString(typeStr);
 
-            return switch (type) {
+            Ticket ticket = switch (type) {
                 case REGULAR -> new Ticket(id, cardNumber, patientName, office, urgency, takenAt);
                 case HOME_VISIT -> {
                     if (address == null || address.isBlank()) {
@@ -124,6 +104,14 @@ public class TicketCsvService {
                 }
                 case CLOSED -> new ClosedTicket(id, cardNumber, patientName, office, urgency, takenAt, address);
             };
+
+            List<String> validationErrors = TicketValidator.validate(ticket);
+            if (!validationErrors.isEmpty()) {
+                String errorMsg = String.join("; ", validationErrors);
+                throw new IllegalArgumentException("Строка %d: %s".formatted(lineNumber, errorMsg));
+            }
+
+            return ticket;
 
         } catch (DateTimeParseException e) {
             throw new IllegalArgumentException("Строка %d: неверный формат даты: %s".formatted(lineNumber, parts[6]));
@@ -163,7 +151,7 @@ public class TicketCsvService {
             }
 
         } catch (IOException e) {
-            throw new TicketCsvException(CsvErrorCode.IO_ERROR, "Ошибка записи файла: " + e.getMessage());
+            throw new TicketCsvException(CsvErrorCode.IO_ERROR, "ошибка записи файла: " + e.getMessage());
         }
     }
 
@@ -176,7 +164,6 @@ public class TicketCsvService {
         return value;
     }
 
-    /** Разбор одной CSV-строки с учётом quoted-полей. */
     private static List<String> splitCsvLine(String line) {
         List<String> result = new ArrayList<>();
         StringBuilder cur = new StringBuilder();
@@ -186,9 +173,9 @@ public class TicketCsvService {
             if (inQuotes) {
                 if (c == '"') {
                     if (i + 1 < line.length() && line.charAt(i + 1) == '"') {
-                        cur.append('"'); i++;          // "" → "
+                        cur.append('"'); i++;
                     } else {
-                        inQuotes = false;              // закрывающая кавычка
+                        inQuotes = false;
                     }
                 } else {
                     cur.append(c);

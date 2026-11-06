@@ -5,15 +5,13 @@ import java.util.Collections;
 import java.util.List;
 
 public class ConcurrencyDemo {
-
     public static String demonstrate() {
         StringBuilder sb = new StringBuilder();
-        sb.append("ДЕМОНСТРАЦИЯ ГОНКИ ПОТОКОВ (Race Condition)\n\n");
+        sb.append("ДЕМОНСТРАЦИЯ ГОНКИ ПОТОКОВ\n\n");
 
         int threads = 10;
         int addsPerThread = 1000;
 
-        // 1. НЕЗАЩИЩЁННАЯ СТРУКТУРА
         List<Integer> unsafeList = new ArrayList<>();
         Thread[] unsafeThreads = new Thread[threads];
         for (int i = 0; i < threads; i++) {
@@ -26,9 +24,7 @@ public class ConcurrencyDemo {
         sb.append("Без синхронизации (ArrayList):\n");
         sb.append("  Ожидалось: ").append(threads * addsPerThread).append("\n");
         sb.append("  Фактически: ").append(unsafeList.size()).append("\n");
-        sb.append("  -> Произошла ПОТЕРЯ ДАННЫХ (гонка)!\n\n");
 
-        // 2. ЗАЩИЩЁННАЯ СТРУКТУРА
         List<Integer> safeList = Collections.synchronizedList(new ArrayList<>());
         Thread[] safeThreads = new Thread[threads];
         for (int i = 0; i < threads; i++) {
@@ -41,7 +37,6 @@ public class ConcurrencyDemo {
         sb.append("С синхронизацией (synchronizedList):\n");
         sb.append("  Ожидалось: ").append(threads * addsPerThread).append("\n");
         sb.append("  Фактически: ").append(safeList.size()).append("\n");
-        sb.append("  -> Данные сохранены полностью!\n");
 
         return sb.toString();
     }
