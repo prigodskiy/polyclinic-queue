@@ -19,35 +19,35 @@ class QueueServiceTest {
     @Test
     void addDuplicateThrows() {
         QueueService s = new QueueService();
-        s.add(regular("100"));
-        assertThrows(DuplicateTicketException.class, () -> s.add(regular("100")));
+        s.add(regular("1000"));
+        assertThrows(DuplicateTicketException.class, () -> s.add(regular("1000")));
     }
 
     @Test
     void acceptNextFreesCard() {
         QueueService s = new QueueService();
-        s.add(regular("100"));
+        s.add(regular("1000"));
         s.acceptNext();
-        assertDoesNotThrow(() -> s.add(regular("100")));
+        assertDoesNotThrow(() -> s.add(regular("1000")));
     }
 
     @Test
     void changePriorityMissingReturnsFalse() {
-        assertFalse(new QueueService().changePriority("000", 1));
+        assertFalse(new QueueService().changePriority("0000", 1));
     }
 
     @Test
     void topKZeroReturnsEmpty() {
         QueueService s = new QueueService();
-        s.add(regular("100"));
+        s.add(regular("1000"));
         assertEquals(0, s.topK(0).length);
     }
 
     @Test
     void topKMoreThanSizeReturnsAll() {
         QueueService s = new QueueService();
-        s.add(regular("100"));
-        s.add(regular("200"));
+        s.add(regular("1000"));
+        s.add(regular("2000"));
         assertEquals(2, s.topK(10).length);
     }
 
@@ -61,9 +61,9 @@ class QueueServiceTest {
     void mergeKeepsDuplicateDetection() {
         QueueService a = new QueueService();
         QueueService b = new QueueService();
-        b.add(regular("100"));
+        b.add(regular("1000"));
         a.merge(b);
-        assertThrows(DuplicateTicketException.class, () -> a.add(regular("100")));
+        assertThrows(DuplicateTicketException.class, () -> a.add(regular("1000")));
         assertTrue(b.isQueueEmpty(), "очередь-источник должна очиститься");
     }
 
@@ -71,7 +71,7 @@ class QueueServiceTest {
     void mergeMovesArchive() {
         QueueService a = new QueueService();
         QueueService b = new QueueService();
-        ClosedTicket c = new ClosedTicket(1, "100", "Иван Иванович", "101", 0,
+        ClosedTicket c = new ClosedTicket(1, "1000", "Иван Иванович", "101", 0,
                 LocalDateTime.now(), null);
         b.addToArchive(c);
         a.merge(b);
@@ -82,7 +82,7 @@ class QueueServiceTest {
     @Test
     void archiveDedupOnLoad() {
         QueueService s = new QueueService();
-        ClosedTicket c = new ClosedTicket(1, "100", "Иван Иванович", "101", 0,
+        ClosedTicket c = new ClosedTicket(1, "1000", "Иван Иванович", "101", 0,
                 LocalDateTime.now(), null);
         s.loadAll(List.of(c, c));
         assertEquals(1, s.archiveSize(), "дубликат по id не должен попасть в архив");
@@ -91,7 +91,7 @@ class QueueServiceTest {
     @Test
     void closedTicketCannotBeAddedToQueue() {
         QueueService s = new QueueService();
-        ClosedTicket c = new ClosedTicket(1, "100", "Иван Иванович", "101", 0,
+        ClosedTicket c = new ClosedTicket(1, "1000", "Иван Иванович", "101", 0,
                 LocalDateTime.now(), null);
         assertThrows(IllegalArgumentException.class, () -> s.add(c));
     }
@@ -99,8 +99,8 @@ class QueueServiceTest {
     @Test
     void removeByCardNumberFreesCard() {
         QueueService s = new QueueService();
-        s.add(regular("100"));
-        assertTrue(s.removeByCardNumber("100"));
-        assertDoesNotThrow(() -> s.add(regular("100")));
+        s.add(regular("1000"));
+        assertTrue(s.removeByCardNumber("1000"));
+        assertDoesNotThrow(() -> s.add(regular("1000")));
     }
 }

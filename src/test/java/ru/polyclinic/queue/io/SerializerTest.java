@@ -25,9 +25,9 @@ class SerializerTest {
     private List<Ticket> createTestData() {
         LocalDateTime time = LocalDateTime.of(2026, 10, 23, 10, 0);
         return List.of(
-                new Ticket(1L, "100", "Иван Иванович", "101", 2, time),
-                new HomeVisitTicket(2L, "200", "Пётр Петрович", "102", 3, time, "ул. Ленина, д. 1"),
-                new ClosedTicket(3L, "300", "Анна Сергеевна", "103", 0, time, null)
+                new Ticket(1L, "1000", "Иван Иванович", "101", 2, time),
+                new HomeVisitTicket(2L, "2000", "Пётр Петрович", "102", 3, time, "ул. Ленина, д. 1"),
+                new ClosedTicket(3L, "3000", "Анна Сергеевна", "103", 0, time, null)
         );
     }
 
@@ -43,7 +43,7 @@ class SerializerTest {
 
         assertInstanceOf(Ticket.class, loaded.get(0));
         assertEquals("Иван Иванович", loaded.get(0).getFullName());
-        assertEquals("100", loaded.get(0).getCardNumber());
+        assertEquals("1000", loaded.get(0).getCardNumber());
 
         assertInstanceOf(HomeVisitTicket.class, loaded.get(1));
         assertEquals("ул. Ленина, д. 1", ((HomeVisitTicket) loaded.get(1)).getAddress());
@@ -97,7 +97,7 @@ class SerializerTest {
         File f = tempDir.resolve("semicolon.csv").toFile();
         LocalDateTime time = LocalDateTime.of(2026, 10, 23, 10, 0);
         HomeVisitTicket tricky = new HomeVisitTicket(
-                1L, "100", "Иван Иванович", "101", 2, time,
+                1L, "1000", "Иван Иванович", "101", 2, time,
                 "ул. Ленина; д. 1; кв. 5");
         CsvDataSerializer s = new CsvDataSerializer();
         s.save(f, List.of(tricky));

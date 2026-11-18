@@ -33,7 +33,6 @@ import ru.polyclinic.queue.io.CsvDataSerializer;
 import ru.polyclinic.queue.io.JsonDataSerializer;
 import ru.polyclinic.queue.io.BinaryDataSerializer;
 import ru.polyclinic.queue.model.ClosedTicket;
-import ru.polyclinic.queue.model.Editable;
 import ru.polyclinic.queue.model.Ticket;
 import ru.polyclinic.queue.service.QueueService;
 import ru.polyclinic.queue.service.TicketGenerator;
@@ -41,6 +40,7 @@ import ru.polyclinic.queue.service.Benchmark;
 import ru.polyclinic.queue.service.ConcurrencyDemo;
 import ru.polyclinic.queue.ui.TicketDialog;
 import ru.polyclinic.queue.ui.TicketTable;
+import ru.polyclinic.queue.ui.HeapVisualizer;
 
 public final class App extends Application {
 
@@ -54,6 +54,7 @@ public final class App extends Application {
     private final TicketTable table = new TicketTable();
     private final TicketTable archiveTable = new TicketTable(true);
     private final Label statusLabel = new Label("Очередь: 0 · Архив: 0");
+    private final HeapVisualizer heapVisualizer = new HeapVisualizer();
 
     private ProgressBar progressBar;
     private Button cancelButton;
@@ -93,7 +94,10 @@ public final class App extends Application {
         Tab archiveTab = new Tab("Архив", archiveTable);
         archiveTab.setClosable(false);
 
-        tabs = new TabPane(queueTab, archiveTab);
+        Tab heapTab = new Tab("Дерево кучи", heapVisualizer);
+        heapTab.setClosable(false);
+
+        tabs = new TabPane(queueTab, archiveTab, heapTab);
         tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         return tabs;
     }
@@ -226,7 +230,7 @@ public final class App extends Application {
     private void editSelected() {
         Ticket selected = requireSelected();
         if (selected == null) return;
-        if (!(selected instanceof Editable)) {
+        if (selected instanceof ClosedTicket) {
             showError("Закрытый талон", "Закрытые талоны доступны только для просмотра.");
             return;
         }
@@ -457,7 +461,6 @@ public final class App extends Application {
                 service.clearAll();
             }
 
-            // Переходим к фазе добавления
             addAllTicketsInBackground(loaded.tickets().toArray(new Ticket[0]), loaded.tickets().size());
             warnIfNeeded(loaded);
         });
@@ -630,8 +633,11 @@ public final class App extends Application {
     }
 
     private void refresh() {
-        table.refresh(service.snapshot());
+        Ticket[] snapshots = service.snapshot();
+        table.refresh(snapshots);
         archiveTable.refresh(service.closedSnapshot());
+        heapVisualizer.draw(snapshots, service.getLastVisited());
+
         statusLabel.setText("Очередь: %d · Архив: %d".formatted(
                 service.queueSize(), service.archiveSize()));
         updateEditButtonState();

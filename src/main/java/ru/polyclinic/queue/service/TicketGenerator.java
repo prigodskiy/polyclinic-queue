@@ -106,6 +106,8 @@ public final class TicketGenerator {
                 throw new RuntimeException("генерация отменена пользователем");
             }
 
+//            try { Thread.sleep(1); } catch (InterruptedException e) {}
+
             String cardNumber = String.valueOf(startCard + i);
             result[i] = generateOne(cardNumber);
 

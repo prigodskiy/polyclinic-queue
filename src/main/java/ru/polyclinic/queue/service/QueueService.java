@@ -147,4 +147,11 @@ public final class QueueService {
             System.out.println("\n" + heap.dump() + "\n");
         }
     }
+
+    public synchronized Set<Integer> getLastVisited() {
+        if (queue instanceof HeapTicketQueueStore<?> heap) {
+            return heap.getLastVisited();
+        }
+        return Set.of();
+    }
 }
