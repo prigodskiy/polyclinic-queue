@@ -13,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class QueueServiceTest {
     private static Ticket regular(String card) {
-        return new Ticket(card, "Иван Иванович", "101", 2);
+        return new Ticket(card, "Иван Иванович", "101", 2, "79991112233", "1234567812345678");
     }
 
     @Test
@@ -72,7 +72,7 @@ class QueueServiceTest {
         QueueService a = new QueueService();
         QueueService b = new QueueService();
         ClosedTicket c = new ClosedTicket(1, "1000", "Иван Иванович", "101", 0,
-                LocalDateTime.now(), null);
+                "79991112233", "1234567812345678", LocalDateTime.now(), null);
         b.addToArchive(c);
         a.merge(b);
         assertEquals(1, a.archiveSize());
@@ -83,7 +83,7 @@ class QueueServiceTest {
     void archiveDedupOnLoad() {
         QueueService s = new QueueService();
         ClosedTicket c = new ClosedTicket(1, "1000", "Иван Иванович", "101", 0,
-                LocalDateTime.now(), null);
+                "79991112233", "1234567812345678", LocalDateTime.now(), null);
         s.loadAll(List.of(c, c));
         assertEquals(1, s.archiveSize(), "дубликат по id не должен попасть в архив");
     }
@@ -92,7 +92,7 @@ class QueueServiceTest {
     void closedTicketCannotBeAddedToQueue() {
         QueueService s = new QueueService();
         ClosedTicket c = new ClosedTicket(1, "1000", "Иван Иванович", "101", 0,
-                LocalDateTime.now(), null);
+                "79991112233", "1234567812345678", LocalDateTime.now(), null);
         assertThrows(IllegalArgumentException.class, () -> s.add(c));
     }
 

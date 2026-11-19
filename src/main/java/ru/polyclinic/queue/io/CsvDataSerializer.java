@@ -13,21 +13,25 @@ public class CsvDataSerializer implements DataSerializer {
         csv.save(Path.of(file.toURI()), tickets);
     }
 
-    @Override
-    public List<Ticket> load(File file) throws Exception {
-        ru.polyclinic.queue.io.CsvLoadResult result = csv.load(file.toPath());
+    public void saveAsV1(File file, List<Ticket> tickets) throws Exception {
+        csv.saveV1(file.toPath(), tickets);
+    }
 
+    public void saveAsV2(File file, List<Ticket> tickets) throws Exception {
+        csv.saveV2(file.toPath(), tickets);
+    }
+
+    @Override
+    public SerializerResult load(File file) throws Exception {
+        CsvLoadResult result = csv.load(file.toPath());
         if (result.tickets().isEmpty() && !result.errors().isEmpty()) {
             throw new Exception("Ошибка CSV: " + result.errors().get(0).message());
         }
-        return result.tickets();
+        return new SerializerResult(result.tickets(), result.version());
     }
 
     @Override
     public String getFormatName() { return "CSV"; }
-
     @Override
-    public String toString() {
-        return getFormatName();
-    }
+    public String toString() { return getFormatName(); }
 }

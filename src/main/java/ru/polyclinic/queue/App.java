@@ -32,6 +32,7 @@ import ru.polyclinic.queue.io.DataSerializer;
 import ru.polyclinic.queue.io.CsvDataSerializer;
 import ru.polyclinic.queue.io.JsonDataSerializer;
 import ru.polyclinic.queue.io.BinaryDataSerializer;
+import ru.polyclinic.queue.io.SerializerResult;
 import ru.polyclinic.queue.model.ClosedTicket;
 import ru.polyclinic.queue.model.Ticket;
 import ru.polyclinic.queue.service.QueueService;
@@ -41,6 +42,7 @@ import ru.polyclinic.queue.service.ConcurrencyDemo;
 import ru.polyclinic.queue.ui.TicketDialog;
 import ru.polyclinic.queue.ui.TicketTable;
 import ru.polyclinic.queue.ui.HeapVisualizer;
+import ru.polyclinic.queue.ui.SaveOptionsDialog;
 
 public final class App extends Application {
 
@@ -62,7 +64,7 @@ public final class App extends Application {
     private Thread currentThread;
     private boolean backgroundBusy = false;
     private volatile boolean cancelled = false;
-    private volatile boolean addPhase = false; // Флаг фазы добавления
+    private volatile boolean addPhase = false;
 
     private TabPane tabs;
     private Button editButton;
@@ -84,6 +86,7 @@ public final class App extends Application {
         Scene scene = new Scene(root, 1040, 620);
         stage.setTitle("Электронная очередь поликлиники");
         stage.setScene(scene);
+        stage.setMaximized(true);
         stage.show();
     }
 
@@ -388,15 +391,13 @@ public final class App extends Application {
         String ext = "*." + serializer.getFormatName().toLowerCase();
         chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(serializer.getFormatName(), ext));
 
+        File initialDir = resolveExistingAppDirectory();
+        if (initialDir != null) {
+            chooser.setInitialDirectory(initialDir);
+        }
+
         File file = chooser.showOpenDialog(table.getScene().getWindow());
         if (file == null) return;
-
-        if (!service.isQueueEmpty()) {
-            Optional<ButtonType> answer = confirm(Alert.AlertType.CONFIRMATION, "Загрузка из файла",
-                    "Текущая очередь будет заменена содержимым файла. Продолжить?",
-                    ButtonType.YES, ButtonType.NO);
-            if (answer.isEmpty() || answer.get() != ButtonType.YES) return;
-        }
 
         loadInBackground(file, true);
     }
@@ -413,11 +414,17 @@ public final class App extends Application {
         String ext = "*." + serializer.getFormatName().toLowerCase();
         chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(serializer.getFormatName(), ext));
 
+        File initialDir = resolveExistingAppDirectory();
+        if (initialDir != null) {
+            chooser.setInitialDirectory(initialDir);
+        }
+
         File file = chooser.showOpenDialog(table.getScene().getWindow());
         if (file == null) return;
 
         loadInBackground(file, false);
     }
+
 
     private void loadInBackground(File file, boolean replace) {
         cancelled = false;
@@ -430,11 +437,10 @@ public final class App extends Application {
 
         DataSerializer serializer = formatCombo.getValue();
 
-        Task<CsvLoadResult> task = new Task<CsvLoadResult>() {
+        Task<SerializerResult> task = new Task<>() {
             @Override
-            protected CsvLoadResult call() throws Exception {
-                List<Ticket> loadedTickets = serializer.load(file);
-                return new CsvLoadResult(loadedTickets, List.of());
+            protected SerializerResult call() throws Exception {
+                return serializer.load(file);
             }
         };
 
@@ -443,18 +449,46 @@ public final class App extends Application {
 
         task.setOnSucceeded(e -> {
             if (cancelled) {
-                System.out.println("[ОТМЕНА] Загрузка отменена - талоны не добавлены");
                 Platform.runLater(() -> {
-                    new Alert(Alert.AlertType.INFORMATION, "Загрузка отменена.").showAndWait();
+                    new Alert(Alert.AlertType.INFORMATION, "Загрузка отменена").showAndWait();
                     cleanup();
                 });
                 return;
             }
 
-            CsvLoadResult loaded = task.getValue();
+            SerializerResult loaded = task.getValue();
             if (loaded == null || loaded.tickets().isEmpty()) {
                 cleanup();
                 return;
+            }
+
+            boolean hasExistingData = replace && (!service.isQueueEmpty() || service.archiveSize() > 0);
+            boolean needsMigration = loaded.version() < 3;
+
+            if (hasExistingData || needsMigration) {
+                List<String> warnings = new ArrayList<>();
+                if (hasExistingData) {
+                    warnings.add("Текущие несохранённые данные (очередь и архив) будут безвозвратно заменены.");
+                }
+                if (needsMigration) {
+                    warnings.add("Файл имеет версию " + loaded.version() + ". Данные в памяти будут преобразованы до версии 3 " +
+                            "(исходный файл на диске останется без изменений)");
+                }
+
+                String header = replace ? "Подтверждение загрузки файла" : "Подтверждение добавления данных";
+                String message = String.join("\n\n", warnings) + "\n\nПродолжить?";
+
+                Optional<ButtonType> answer = confirm(
+                        Alert.AlertType.CONFIRMATION,
+                        header,
+                        message,
+                        ButtonType.YES, ButtonType.NO
+                );
+
+                if (answer.isEmpty() || answer.get() != ButtonType.YES) {
+                    cleanup();
+                    return;
+                }
             }
 
             if (replace) {
@@ -462,7 +496,11 @@ public final class App extends Application {
             }
 
             addAllTicketsInBackground(loaded.tickets().toArray(new Ticket[0]), loaded.tickets().size());
-            warnIfNeeded(loaded);
+
+            if (serializer instanceof CsvDataSerializer) {
+                CsvLoadResult csvResult = new CsvLoadResult(loaded.tickets(), List.of(), loaded.version());
+                warnIfNeeded(csvResult);
+            }
         });
 
         task.setOnFailed(e -> {
@@ -616,20 +654,35 @@ public final class App extends Application {
 
     private void saveFile() {
         DataSerializer serializer = formatCombo.getValue();
-        FileChooser chooser = new FileChooser();
-        String ext = "*." + serializer.getFormatName().toLowerCase();
-        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(serializer.getFormatName(), ext));
-        chooser.setInitialFileName("tickets." + serializer.getFormatName().toLowerCase());
+        String ext = "." + serializer.getFormatName().toLowerCase();
+        String defaultName = "tickets" + ext;
 
-        javafx.stage.Window window = table.getScene() != null ? table.getScene().getWindow() : null;
-        File file = chooser.showSaveDialog(window);
-        if (file == null) return;
+        SaveOptionsDialog dialog = new SaveOptionsDialog(
+                (Stage) table.getScene().getWindow(),
+                ext,
+                defaultName
+        );
 
-        try {
-            serializer.save(file, service.exportAll());
-        } catch (Exception error) {
-            showError("Сохранение не удалось", error.getMessage());
-        }
+        dialog.showAndWait().ifPresent(result -> {
+            File file = result.file();
+            int version = result.version();
+
+            try {
+                if (version == 1) {
+                    if (serializer instanceof JsonDataSerializer j) j.saveAsV1(file, service.exportAll());
+                    else if (serializer instanceof BinaryDataSerializer b) b.saveAsV1(file, service.exportAll());
+                    else if (serializer instanceof CsvDataSerializer c) c.saveAsV1(file, service.exportAll());
+                } else if (version == 2) {
+                    if (serializer instanceof JsonDataSerializer j) j.saveAsV2(file, service.exportAll());
+                    else if (serializer instanceof BinaryDataSerializer b) b.saveAsV2(file, service.exportAll());
+                    else if (serializer instanceof CsvDataSerializer c) c.saveAsV2(file, service.exportAll());
+                } else {
+                    serializer.save(file, service.exportAll());
+                }
+            } catch (Exception error) {
+                showError("Сохранение не удалось", error.getMessage());
+            }
+        });
     }
 
     private void refresh() {
@@ -709,7 +762,8 @@ public final class App extends Application {
     private void loadFromSilently(File file) {
         try {
             DataSerializer serializer = new ru.polyclinic.queue.io.CsvDataSerializer();
-            List<Ticket> loadedTickets = serializer.load(file);
+            SerializerResult result = serializer.load(file);
+            List<Ticket> loadedTickets = result.tickets();
 
             service.loadAll(loadedTickets);
             service.printStructure();
@@ -718,7 +772,16 @@ public final class App extends Application {
         }
     }
 
+    private File resolveExistingAppDirectory() {
+        java.nio.file.Path userHome = java.nio.file.Paths.get(System.getProperty("user.home"));
+        java.nio.file.Path documents = userHome.resolve("Documents");
+        java.nio.file.Path baseDir = java.nio.file.Files.isDirectory(documents) ? documents : userHome;
+        java.nio.file.Path appDir = baseDir.resolve("polyclinic-queue");
+        return java.nio.file.Files.isDirectory(appDir) ? appDir.toFile() : null;
+    }
+
     public static void main(String[] args) {
+        java.util.Locale.setDefault(new java.util.Locale("ru", "RU"));
         launch(args);
     }
 }

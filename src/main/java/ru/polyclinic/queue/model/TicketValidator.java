@@ -57,6 +57,16 @@ public final class TicketValidator {
             put(errors, TicketField.URGENCY, "Срочность должна быть от 0 до 3");
         }
 
+        String phone = ticket.getPhoneNumber();
+        if (!"Неизвестен".equals(phone) && !phone.matches("^7\\d{10}$")) {
+            put(errors, TicketField.PHONE_NUMBER, "Телефон должен начинаться с 7 и содержать 11 цифр");
+        }
+
+        String policy = ticket.getPolicyNumber();
+        if (!"Нет полиса".equals(policy) && !policy.matches("\\d{16}")) {
+            put(errors, TicketField.POLICY_NUMBER, "Полис должен содержать ровно 16 цифр");
+        }
+
         if (ticket.getTakenAt() == null) {
             put(errors, TicketField.TAKEN_AT, "Время взятия обязательно");
         }

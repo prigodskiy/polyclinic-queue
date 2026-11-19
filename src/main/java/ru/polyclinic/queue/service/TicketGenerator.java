@@ -106,8 +106,6 @@ public final class TicketGenerator {
                 throw new RuntimeException("генерация отменена пользователем");
             }
 
-//            try { Thread.sleep(1); } catch (InterruptedException e) {}
-
             String cardNumber = String.valueOf(startCard + i);
             result[i] = generateOne(cardNumber);
 
@@ -134,13 +132,23 @@ public final class TicketGenerator {
         String fullName = surname + " " + name + " " + patronymic;
         String office = OFFICES[random.nextInt(OFFICES.length)];
         int urgency = random.nextInt(4);
+        String phoneNumber = randomPhoneNumber();
+        String policyNumber = randomPolicyNumber();
 
         if (random.nextDouble() < HOME_VISIT_PROBABILITY) {
             String address = randomAddress();
-            return new HomeVisitTicket(cardNumber, fullName, office, urgency, address);
+            return new HomeVisitTicket(cardNumber, fullName, office, urgency, phoneNumber, policyNumber, address);
         }
 
-        return new Ticket(cardNumber, fullName, office, urgency);
+        return new Ticket(cardNumber, fullName, office, urgency, phoneNumber, policyNumber);
+    }
+
+    private String randomPhoneNumber() {
+        return "79" + (100000000L + random.nextInt(900000000));
+    }
+
+    private String randomPolicyNumber() {
+        return "77" + (10000000000000L + random.nextLong(90000000000000L));
     }
 
     private String randomAddress() {

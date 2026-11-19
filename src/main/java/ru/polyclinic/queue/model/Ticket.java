@@ -1,5 +1,6 @@
 package ru.polyclinic.queue.model;
 
+import java.io.Serial;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
@@ -18,6 +19,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
         @JsonSubTypes.Type(value = HomeVisitTicket.class, name = "HOME_VISIT")
 })
 public class Ticket implements Editable, java.io.Serializable {
+    @Serial
     private static final long serialVersionUID = 1L;
 
     private static final AtomicLong ID_SEQUENCE = new AtomicLong(1);
@@ -27,10 +29,12 @@ public class Ticket implements Editable, java.io.Serializable {
     private final String fullName;
     private final String office;
     private final int urgency;
+    private final String phoneNumber;
+    private final String policyNumber;
     private final LocalDateTime takenAt;
 
-    public Ticket(String cardNumber, String fullName, String office, int urgency) {
-        this(nextId(), cardNumber, fullName, office, urgency, LocalDateTime.now());
+    public Ticket(String cardNumber, String fullName, String office, int urgency, String phoneNumber, String policyNumber) {
+        this(nextId(), cardNumber, fullName, office, urgency, phoneNumber, policyNumber, LocalDateTime.now());
     }
 
     @JsonCreator
@@ -40,6 +44,8 @@ public class Ticket implements Editable, java.io.Serializable {
             @JsonProperty("fullName") String fullName,
             @JsonProperty("office") String office,
             @JsonProperty("urgency") int urgency,
+            @JsonProperty("phoneNumber") String phoneNumber,
+            @JsonProperty("policyNumber") String policyNumber,
             @JsonProperty("takenAt") LocalDateTime takenAt) {
         if (urgency < 0 || urgency > 3) {
             throw new IllegalArgumentException("urgency должна быть в диапазоне [0, 3]");
@@ -49,6 +55,8 @@ public class Ticket implements Editable, java.io.Serializable {
         this.fullName = normalize(fullName, "fullName");
         this.office = normalize(office, "office");
         this.urgency = urgency;
+        this.phoneNumber = (phoneNumber == null || phoneNumber.isBlank()) ? "Неизвестен" : phoneNumber.strip();
+        this.policyNumber = (policyNumber == null || policyNumber.isBlank()) ? "Нет полиса" : policyNumber.strip();
         this.takenAt = Objects.requireNonNull(takenAt, "значение takenAt не должно быть null");
     }
 
@@ -70,20 +78,24 @@ public class Ticket implements Editable, java.io.Serializable {
     public String getFullName() { return fullName; }
     public String getOffice() { return office; }
     public int getUrgency() { return urgency; }
+    public String getPhoneNumber() { return phoneNumber; }
+    public String getPolicyNumber() { return policyNumber; }
     public LocalDateTime getTakenAt() { return takenAt; }
 
-    public Ticket withChanges(String newFullName, String newOffice, Integer newUrgency) {
+    public Ticket withChanges(String newFullName, String newOffice, Integer newUrgency, String newPhoneNumber, String newPolicyNumber) {
         return new Ticket(
                 id,
                 cardNumber,
                 newFullName != null ? newFullName : fullName,
                 newOffice != null ? newOffice : office,
                 newUrgency != null ? newUrgency : urgency,
+                newPhoneNumber != null ? newPhoneNumber : phoneNumber,
+                newPolicyNumber != null ? newPolicyNumber : policyNumber,
                 takenAt);
     }
 
     public Ticket withUrgency(int newUrgency) {
-        return withChanges(null, null, newUrgency);
+        return withChanges(null, null, newUrgency, null, null);
     }
 
     @Override
@@ -106,7 +118,8 @@ public class Ticket implements Editable, java.io.Serializable {
 
     @Override
     public String toString() {
-        return "%s{card='%s', patient='%s', office='%s', urgency=%d, time=%s}".formatted(
-                getType(), cardNumber, fullName, office, urgency, takenAt);
+        return "%s{card='%s', patient='%s', office='%s', urgency=%d, phone='%s', time=%s}".formatted(
+                getType(), cardNumber, fullName, office, urgency, phoneNumber, takenAt);
     }
+
 }
