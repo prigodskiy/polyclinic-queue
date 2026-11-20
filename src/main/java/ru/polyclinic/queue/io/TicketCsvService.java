@@ -132,7 +132,6 @@ public class TicketCsvService {
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException("Строка %d: неверный числовой формат: %s".formatted(lineNumber, e.getMessage()));
         }
-        // Наши IllegalArgumentException пролетают мимо этого catch, так что двойного "Строка X: Строка X" не будет
     }
 
     private String formatLine(Ticket ticket, int version) {

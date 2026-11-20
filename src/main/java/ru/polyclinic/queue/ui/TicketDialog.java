@@ -118,8 +118,6 @@ public final class TicketDialog extends Dialog<Ticket> {
             revalidate(existing, edit);
         });
 
-//        addressField.setDisable(!startsHome);
-
         getDialogPane().setContent(grid);
         getDialogPane().setPrefWidth(480);
 

@@ -497,9 +497,8 @@ public final class App extends Application {
 
             addAllTicketsInBackground(loaded.tickets().toArray(new Ticket[0]), loaded.tickets().size());
 
-            if (serializer instanceof CsvDataSerializer) {
-                CsvLoadResult csvResult = new CsvLoadResult(loaded.tickets(), List.of(), loaded.version());
-                warnIfNeeded(csvResult);
+            if (serializer instanceof CsvDataSerializer csvSer && csvSer.getLastResult() != null) {
+                warnIfNeeded(csvSer.getLastResult());
             }
         });
 
